@@ -25,7 +25,13 @@ DIM_TABLES = [
     "Dim_Penalty_Type",
 ]
 
-# Primary key of each dimension, used by the post-load checks
+FACT_TABLES = [
+    "Fact_Facility_Monthly",
+    "Fact_Penalty_Event",
+]
+
+# Primary key of each table, used by the post-load checks.
+# Fact_Facility_Monthly is the one composite key in the model.
 PRIMARY_KEYS = {
     "Dim_Date": "date_key",
     "Dim_Facility": "facility_key",
@@ -33,6 +39,11 @@ PRIMARY_KEYS = {
     "Dim_Ownership": "ownership_key",
     "Dim_Chain": "chain_key",
     "Dim_Penalty_Type": "penalty_type_key",
+    "Fact_Penalty_Event": "penalty_event_key",
+}
+
+COMPOSITE_KEYS = {
+    "Fact_Facility_Monthly": ["snapshot_date_key", "ccn"],
 }
 
 # Natural keys that must be unique. For Dim_Facility it is not ccn alone,
@@ -46,13 +57,32 @@ NATURAL_KEYS = {
     "Dim_Penalty_Type": ["penalty_type"],
 }
 
+# Every foreign key in the facts, as {fact: {column: (dimension, dimension key)}}
+FOREIGN_KEYS = {
+    "Fact_Facility_Monthly": {
+        "snapshot_date_key": ("Dim_Date", "date_key"),
+        "facility_key": ("Dim_Facility", "facility_key"),
+        "geography_key": ("Dim_Geography", "geography_key"),
+        "ownership_key": ("Dim_Ownership", "ownership_key"),
+        "chain_key": ("Dim_Chain", "chain_key"),
+    },
+    "Fact_Penalty_Event": {
+        "penalty_date_key": ("Dim_Date", "date_key"),
+        "facility_key": ("Dim_Facility", "facility_key"),
+        "geography_key": ("Dim_Geography", "geography_key"),
+        "ownership_key": ("Dim_Ownership", "ownership_key"),
+        "chain_key": ("Dim_Chain", "chain_key"),
+        "penalty_type_key": ("Dim_Penalty_Type", "penalty_type_key"),
+    },
+}
+
 
 def write_tables(tables: dict[str, pd.DataFrame], log: RunLog) -> None:
     """Write every DataFrame into DuckDB, replacing what is there."""
     config.ensure_dirs()
     con = duckdb.connect(str(config.DB_PATH))
     try:
-        for name in DIM_TABLES:
+        for name in DIM_TABLES + FACT_TABLES:
             if name not in tables:
                 continue
             frame = tables[name]
@@ -113,7 +143,64 @@ def validate(tables: dict[str, pd.DataFrame], log: RunLog) -> list[str]:
             detail=f"checked {name}: {len(frame):,} rows, primary key unique={dup == 0}",
         )
 
+    for name, keys in COMPOSITE_KEYS.items():
+        frame = tables.get(name)
+        if frame is None or frame.empty:
+            continue
+        dup = int(frame.duplicated(subset=keys).sum())
+        if dup:
+            problems.append(f"{name}: composite key {keys} duplicated on {dup} rows")
+        log.add(
+            step="load",
+            rule="post_load_check",
+            target=name,
+            rows_affected=len(frame),
+            detail=f"checked {name}: {len(frame):,} rows, key {keys} unique={dup == 0}",
+        )
+
     problems.extend(_validate_scd2(tables.get("Dim_Facility"), log))
+    problems.extend(_validate_foreign_keys(tables, log))
+    return problems
+
+
+def _validate_foreign_keys(tables: dict[str, pd.DataFrame], log: RunLog) -> list[str]:
+    """Every foreign key in a fact must exist in its dimension.
+
+    This is the check that catches the failure mode the design document keeps
+    warning about: a key that does not resolve produces no error, it just drops
+    the row from every result.
+    """
+    problems: list[str] = []
+
+    for fact_name, fks in FOREIGN_KEYS.items():
+        fact = tables.get(fact_name)
+        if fact is None or fact.empty:
+            continue
+
+        for column, (dim_name, dim_key) in fks.items():
+            dim = tables.get(dim_name)
+            if dim is None:
+                problems.append(f"{fact_name}.{column}: dimension {dim_name} is missing")
+                continue
+
+            valid = set(dim[dim_key].dropna().tolist())
+            orphans = int((~fact[column].isin(valid)).sum())
+            if orphans:
+                problems.append(
+                    f"{fact_name}.{column}: {orphans} rows point at a missing {dim_name} row"
+                )
+
+            unknown = int((fact[column] == -1).sum())
+            log.add(
+                step="load",
+                rule="fk_check",
+                target=f"{fact_name}.{column}",
+                rows_affected=orphans,
+                detail=(
+                    f"-> {dim_name}: {orphans} orphans, "
+                    f"{unknown:,} pointing at Unknown ({unknown / len(fact):.2%})"
+                ),
+            )
     return problems
 
 
