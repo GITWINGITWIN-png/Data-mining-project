@@ -99,6 +99,48 @@ def read_snapshot(snapshot_date: str, log: RunLog) -> SnapshotFrame | None:
     )
 
 
+def drop_republished_periods(
+    frames: list[SnapshotFrame], log: RunLog
+) -> list[SnapshotFrame]:
+    """Keep one frame per Processing Date — the one published last.
+
+    CMS sometimes republishes a period under a new archive date: 2026-07-29 and
+    2026-08-06 both carry Processing Date 2026-07-01. The declared grain is one
+    row per *publication period*, so a republication is not a new row.
+
+    This runs here, before either driver sees the frames, rather than inside one
+    of them. While it lived in the fact builder alone, Fact_Facility_Monthly
+    collapsed the pair correctly but Dim_Facility still walked both — and because
+    both carry the same Processing Date, SCD2 closed a version at the very
+    instant it opened it, leaving a row with effective_date == expiry_date that
+    no point in time can ever select. `_validate_scd2` did not report it either:
+    its overlap test asks for effective < previous expiry, and equality slips
+    through.
+
+    The later file wins because it carries the corrections.
+    """
+    by_stamp: dict[pd.Timestamp, SnapshotFrame] = {}
+    dropped = []
+    for frame in sorted(frames, key=lambda f: f.snapshot_date):
+        existing = by_stamp.get(frame.processing_date)
+        if existing is not None:
+            dropped.append((existing.snapshot_date, frame.snapshot_date, frame.processing_date))
+        by_stamp[frame.processing_date] = frame
+
+    for old, new, stamp in dropped:
+        log.add(
+            step="clean",
+            rule="Q2",
+            snapshot_date=new,
+            target="all tables",
+            detail=(
+                f"period {old} and {new} share Processing Date {stamp.date()}; "
+                f"keeping {new} (the later publication carries the corrections)"
+            ),
+        )
+    return sorted(by_stamp.values(), key=lambda f: f.processing_date)
+
+
 def read_all(dates: list[str] | None, log: RunLog) -> list[SnapshotFrame]:
     """Read every extracted period (oldest first — SCD2 and dedup rely on it)."""
     available = fetch.local_snapshot_dates()
@@ -113,4 +155,4 @@ def read_all(dates: list[str] | None, log: RunLog) -> list[SnapshotFrame]:
         frame = read_snapshot(snapshot_date, log)
         if frame is not None:
             frames.append(frame)
-    return frames
+    return drop_republished_periods(frames, log)

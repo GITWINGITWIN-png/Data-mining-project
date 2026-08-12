@@ -68,8 +68,20 @@ def main(argv: list[str] | None = None) -> int:
     print("\nValidating before writing to the database")
     problems = load.validate({**dims, **tables}, log)
 
+    if problems:
+        # Nothing is written: publishing rows we already know are broken would
+        # leave the warehouse wrong and the warning buried in the terminal
+        load.write_run_log(log)
+        csv_path = log.save_csv()
+        print("\n! problems found — nothing was written to the database")
+        for p in problems:
+            print(f"  - {p}")
+        print(f"\n  run log:  {csv_path.name}")
+        return 2
+
     print("\nWriting to the database")
     load.write_tables(tables, log)
+    load.write_run_log(log)
     csv_path = log.save_csv()
 
     print("\n" + "=" * 62)
@@ -77,12 +89,6 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {name:<22} {len(frame):>9,} rows")
     print(f"  database: {config.DB_PATH}")
     print(f"  run log:  {csv_path.name}")
-
-    if problems:
-        print("\n! problems found")
-        for p in problems:
-            print(f"  - {p}")
-        return 2
 
     print("\nAll post-load checks passed")
     return 0

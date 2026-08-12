@@ -33,6 +33,12 @@ SCD2_TRACKED = [
     "bed_size_band",
 ]
 
+# Of those, the ones that are genuinely true/false. They need naming because the
+# "Unknown" row cannot carry the string "Unknown" in a boolean column: pandas
+# widens the column to object, DuckDB then stores it as VARCHAR, and a dashboard
+# filter written as `WHERE abuse_icon` stops working against 'True'/'False' text.
+BOOLEAN_TRACKED = {"resides_in_hospital", "ccrc_flag", "abuse_icon"}
+
 # Thai month labels for the dashboard. The column is named month_name_th in the
 # design, so its content stays Thai on purpose; every other value is English.
 THAI_MONTHS = [
@@ -125,16 +131,15 @@ def build_dim_geography(frames: list[SnapshotFrame], log: RunLog) -> pd.DataFram
     pieces = []
     for order, frame in enumerate(frames):
         df = frame.provider_info
-        piece = pd.DataFrame({
-            "zip_code": df["zip_code"],
-            "city": clean.normalize_text(df["city"]),
-            "county_parish": clean.normalize_text(df["county_parish"]),
-            "state_code": clean.normalize_text(df["state_code"], upper=True),
-            "urban_flag": df["urban_flag"] if "urban_flag" in df else pd.NA,
-            "latitude": clean.to_number(df["latitude"]) if "latitude" in df else pd.NA,
-            "longitude": clean.to_number(df["longitude"]) if "longitude" in df else pd.NA,
-            "_order": order,
-        })
+        # The three key columns come from the shared normaliser, never inline —
+        # the fact lookup uses the same function to build its probe
+        piece = clean.geography_key_columns(df).assign(
+            county_parish=clean.normalize_text(df["county_parish"]),
+            urban_flag=df["urban_flag"] if "urban_flag" in df else pd.NA,
+            latitude=clean.to_number(df["latitude"]) if "latitude" in df else pd.NA,
+            longitude=clean.to_number(df["longitude"]) if "longitude" in df else pd.NA,
+            _order=order,
+        )
         pieces.append(piece)
 
     allrows = pd.concat(pieces, ignore_index=True)
@@ -460,12 +465,16 @@ def build_dim_facility(frames: list[SnapshotFrame], log: RunLog) -> pd.DataFrame
     out = out[cols]
     out = _prepend_unknown(out, "facility_key", {
         "ccn": UNKNOWN_LABEL,
-        **{c: UNKNOWN_LABEL for c in SCD2_TRACKED},
+        # Text attributes say "Unknown"; boolean ones stay null, because a
+        # boolean column cannot hold that word without turning into text
+        **{c: (pd.NA if c in BOOLEAN_TRACKED else UNKNOWN_LABEL) for c in SCD2_TRACKED},
         "effective_date": pd.NaT,
         "expiry_date": pd.NaT,
         "is_current": False,
     })
     out["is_current"] = out["is_current"].astype(bool)
+    for col in BOOLEAN_TRACKED:
+        out[col] = out[col].astype("boolean")
 
     log.add(
         step="transform",
@@ -503,7 +512,13 @@ def _facility_attrs(frame: SnapshotFrame) -> dict[str, dict]:
 
 
 def _bed_size_band(beds: pd.Series) -> pd.Series:
-    band = pd.Series(UNKNOWN_LABEL, index=beds.index, dtype="object")
+    """Band the bed count, leaving an unknown count *null* rather than "Unknown".
+
+    The word would be a value like any other, so SCD2 would read a facility whose
+    bed count arrives late as having changed band, and open a version for it. Null
+    is what the "unknown becomes known" rule in `build_dim_facility` looks for.
+    """
+    band = pd.Series(pd.NA, index=beds.index, dtype="object")
     band[beds < 50] = "Small (<50 beds)"
     band[(beds >= 50) & (beds < 100)] = "Medium (50-99 beds)"
     band[(beds >= 100) & (beds < 200)] = "Large (100-199 beds)"
@@ -522,15 +537,6 @@ def _new_version(ccn: str, attrs: dict, stamp: pd.Timestamp) -> dict:
 
 def _has_value(value) -> bool:
     return value is not None and value is not pd.NA and pd.notna(value)
-
-
-def _differs(new_value, old_value) -> bool:
-    """Compare two values, treating "both empty" as equal."""
-    if not _has_value(new_value) and not _has_value(old_value):
-        return False
-    if not _has_value(new_value) or not _has_value(old_value):
-        return True
-    return new_value != old_value
 
 
 def _prepend_unknown(df: pd.DataFrame, key_col: str, values: dict) -> pd.DataFrame:

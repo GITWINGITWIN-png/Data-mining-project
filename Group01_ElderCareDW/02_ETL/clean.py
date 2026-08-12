@@ -126,32 +126,79 @@ def to_number(series: pd.Series) -> pd.Series:
 
 
 def parse_date(series: pd.Series, field: str, snapshot_date: str, log: RunLog) -> pd.Series:
-    """Rule Q6 — parse dates with an explicit format list, never by inference.
+    """Rule Q6 — one format is chosen for the whole column, never row by row.
 
-    Tries one format at a time, filling only the still-empty slots, then records
-    how many values matched no format at all.
+    A column holds one format. Deciding per row looks more forgiving and is in
+    fact the trap the rule exists to avoid: trying `%m/%d/%Y` first and letting
+    the rest fall through to `%d/%m/%Y` means a column genuinely written as
+    day/month is *half* misread, silently and with nothing logged, because only
+    the rows whose day exceeds 12 fail the first format and reach the second.
+    `01/02/2024` becomes 2 January and `13/02/2024` becomes 13 February, in the
+    same column.
+
+    So every candidate format is scored against the whole column, and the one
+    that explains the most values wins. Values the winner cannot parse are left
+    null and counted, rather than quietly handed to a different calendar.
     """
     raw = series.astype("string").str.strip().replace({"": pd.NA})
-    result = pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns]")
+    total = int(raw.notna().sum())
+    if not total:
+        return pd.Series(pd.NaT, index=raw.index, dtype="datetime64[ns]")
 
+    attempts = {}
     for fmt in DATE_FORMATS:
-        todo = result.isna() & raw.notna()
-        if not todo.any():
-            break
-        parsed = pd.to_datetime(raw[todo], format=fmt, errors="coerce")
-        result[todo] = parsed
+        parsed = pd.to_datetime(raw, format=fmt, errors="coerce")
+        attempts[fmt] = (int(parsed.notna().sum()), parsed)
 
-    unparsed = int((result.isna() & raw.notna()).sum())
-    if unparsed:
-        sample = raw[result.isna() & raw.notna()].dropna().unique()[:3].tolist()
+    best_fmt = max(attempts, key=lambda f: attempts[f][0])
+    best_hits, result = attempts[best_fmt]
+
+    if best_hits == 0:
         log.add(
             step="clean",
             rule="Q6",
             snapshot_date=snapshot_date,
             target=field,
-            rows_affected=unparsed,
-            detail=f"matched no accepted date format, e.g. {sample}",
+            rows_affected=total,
+            detail=(
+                f"no accepted format parsed any value, e.g. "
+                f"{raw.dropna().unique()[:3].tolist()} — left null"
+            ),
         )
+        return result
+
+    # Two formats explaining the column equally well means the dates themselves
+    # cannot say which calendar they were written in (every day <= 12). Report it
+    # instead of letting the list order silently pick a winner.
+    rivals = [
+        f for f, (hits, parsed) in attempts.items()
+        if f != best_fmt and hits == best_hits and not parsed.equals(result)
+    ]
+    if rivals:
+        log.add(
+            step="clean",
+            rule="Q6",
+            snapshot_date=snapshot_date,
+            target=field,
+            rows_affected=best_hits,
+            detail=(
+                f"! ambiguous: {best_fmt} and {rivals} each explain all "
+                f"{best_hits:,} values but disagree — using {best_fmt}, needs a human decision"
+            ),
+        )
+
+    unparsed = total - best_hits
+    log.add(
+        step="clean",
+        rule="Q6",
+        snapshot_date=snapshot_date,
+        target=field,
+        rows_affected=unparsed,
+        detail=(
+            f"format {best_fmt} chosen for the whole column "
+            f"({best_hits:,} of {total:,} parsed, {unparsed:,} left null)"
+        ),
+    )
     return result
 
 
@@ -168,6 +215,12 @@ def normalize_special_focus(series: pd.Series) -> pd.Series:
     In 2019 the SFF column holds Y/N; in 2026 it holds three text values
     (`SFF`, `SFF Candidate`, blank). Without unifying them, SCD2 would see a
     fake change on every facility at the era boundary.
+
+    A blank only becomes "None" when the era actually carries the column. If the
+    column is absent altogether every value is null, and reading that as "None"
+    would claim we know a facility has no special focus status when in truth we
+    have not been told — the null has to survive so that SCD2 treats it as
+    unknown rather than as a state.
     """
     text = series.astype("string").str.strip()
     mapped = text.replace(
@@ -177,7 +230,33 @@ def normalize_special_focus(series: pd.Series) -> pd.Series:
             "": pd.NA,
         }
     )
-    return mapped.fillna("None")
+    era_has_column = text.notna().any()
+    return mapped.fillna("None") if era_has_column else mapped
+
+
+def geography_key_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """The natural key of Dim_Geography, normalised identically on both sides.
+
+    Rule Q5. City has to be upper-cased for exactly the reason facility names
+    are: CMS changes the capitalisation between periods — ZIP 72143 in Arkansas
+    is `SEARCY` in the April 2026 file and `Searcy` in the June 2026 file — and a
+    dimension keyed on the raw spelling splits one real place into several rows.
+    The same facility then gets a different geography_key from one period to the
+    next, and every trend at city or ZIP grain silently breaks in half.
+
+    Both the dimension builder and the fact lookup must call this. If the two
+    sides ever normalise differently, no row matches and every geography_key
+    resolves to Unknown — with no error, which is the whole reason this lives in
+    one function instead of being written out twice.
+    """
+    return pd.DataFrame(
+        {
+            "zip_code": normalize_zip(df["zip_code"]),
+            "city": normalize_text(df["city"], upper=True),
+            "state_code": normalize_text(df["state_code"], upper=True),
+        },
+        index=df.index,
+    )
 
 
 def normalize_ownership(

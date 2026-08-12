@@ -99,12 +99,12 @@ def lookup_facility_key(
 #  Other foreign keys
 # =====================================================================
 def _geography_key(df: pd.DataFrame, dim_geography: pd.DataFrame) -> pd.Series:
-    """Match on (zip_code, city, state_code), the natural key of the dimension."""
-    probe = pd.DataFrame({
-        "zip_code": df["zip_code"],
-        "city": clean.normalize_text(df["city"]),
-        "state_code": clean.normalize_text(df["state_code"], upper=True),
-    })
+    """Match on (zip_code, city, state_code), the natural key of the dimension.
+
+    The probe is built by the same function the dimension was built with, so the
+    two sides cannot drift apart — see `clean.geography_key_columns`.
+    """
+    probe = clean.geography_key_columns(df)
     dim = dim_geography[["zip_code", "city", "state_code", "geography_key"]]
     merged = probe.merge(dim, on=["zip_code", "city", "state_code"], how="left")
     return merged["geography_key"].fillna(UNKNOWN_KEY).astype("int64").set_axis(df.index)
@@ -152,12 +152,26 @@ def build_fact_facility_monthly(
 
     Grain: one row = one CCN as of one CMS Processing Date.
     """
-    frames = _drop_republished_periods(frames, log)
     pieces = []
 
     for frame in sorted(frames, key=lambda f: f.processing_date):
         df = frame.provider_info
         stamp = frame.processing_date
+
+        # The grain is one row per (period, CCN), so a period that repeats a CCN
+        # would break the primary key. Rule Q1 has already logged the duplicate;
+        # keep the first row, the same choice Dim_Facility makes.
+        if df["ccn"].duplicated().any():
+            n = int(df["ccn"].duplicated().sum())
+            df = df.drop_duplicates(subset="ccn", keep="first")
+            log.add(
+                step="clean",
+                rule="Q2",
+                snapshot_date=frame.snapshot_date,
+                target="Fact_Facility_Monthly",
+                rows_affected=n,
+                detail="CCN repeated inside one period — kept the first row to hold the grain",
+            )
 
         beds = clean.to_number(df["certified_beds"])
         residents = clean.to_number(df["avg_residents_per_day"])
@@ -215,41 +229,6 @@ def build_fact_facility_monthly(
         detail=f"{out['snapshot_date_key'].nunique()} periods, {out['ccn'].nunique():,} CCN",
     )
     return out
-
-
-def _drop_republished_periods(
-    frames: list[SnapshotFrame], log: RunLog
-) -> list[SnapshotFrame]:
-    """Keep one frame per Processing Date — the one published last.
-
-    CMS sometimes republishes a period under a new archive date: 2026-07-29 and
-    2026-08-06 both carry Processing Date 2026-07-01. The declared grain is one
-    row per *publication period*, so a republication is not a new row — and
-    without this the primary key (snapshot_date_key, ccn) would duplicate.
-
-    The later file wins because it carries the corrections (in that pair, one
-    facility's staffing rating was revised).
-    """
-    by_stamp: dict[pd.Timestamp, SnapshotFrame] = {}
-    dropped = []
-    for frame in sorted(frames, key=lambda f: f.snapshot_date):
-        existing = by_stamp.get(frame.processing_date)
-        if existing is not None:
-            dropped.append((existing.snapshot_date, frame.snapshot_date, frame.processing_date))
-        by_stamp[frame.processing_date] = frame
-
-    for old, new, stamp in dropped:
-        log.add(
-            step="clean",
-            rule="Q2",
-            snapshot_date=new,
-            target="Fact_Facility_Monthly",
-            detail=(
-                f"period {old} and {new} share Processing Date {stamp.date()}; "
-                f"keeping {new} (the later publication carries the corrections)"
-            ),
-        )
-    return list(by_stamp.values())
 
 
 def _fix_turnover_units(
@@ -341,14 +320,23 @@ def build_fact_penalty_event(
 
     The Penalties file is a rolling 3-year window, so a single penalty is
     reported again in up to 36 periods. Deduplication is therefore the whole
-    job of this function, and it needs two systems (rule Q2):
+    job of this function, and it uses **one** identity for every era (rule Q2):
 
-      * Fine ID exists only from period 202606 onward, and is blank on every
-        Payment Denial row, so it can key at most half the table
-      * the natural key (ccn, date, type, amount) alone merges genuinely
-        distinct penalties — 286 of them, 2.09%, worth $2.66M — because one
-        facility can be fined several times on one day for the same amount,
-        so it is combined with an occurrence number inside the group
+        ccn | penalty_date | penalty_type | fine_amount | occurrence
+
+    `occurrence` is the row's position inside its own identical group, which is
+    what keeps genuinely distinct penalties apart: one facility can be fined
+    several times on the same day for the same amount (CCN 015060 was fined
+    $5,782 three times on 2025-05-09), and the natural key without it would
+    merge 286 real fines, 2.09%, worth $2.66M.
+
+    Why not key on Fine ID: it exists only from period 202606 onward and is
+    blank on every Payment Denial row. Keying on it *where available* and on the
+    natural key elsewhere gives the same physical penalty two different
+    identities depending on which period it was first seen in, so every penalty
+    visible both before and after 202606 is stored twice — measured at 12,189
+    surplus rows and $382M of double-counted fines. Fine ID is therefore carried
+    as a descriptive attribute and used to *audit* this key, never to form it.
     """
     pieces = []
     for frame in sorted(frames, key=lambda f: f.processing_date):
@@ -387,31 +375,38 @@ def build_fact_penalty_event(
     allrows = pd.concat(pieces, ignore_index=True)
     before = len(allrows)
 
-    # Two dedup systems, chosen per row rather than per era, because even in the
-    # 2026 era every Payment Denial row has a blank Fine ID
-    has_fine_id = allrows["fine_id"].notna()
-    allrows["fine_id_source"] = pd.Series("natural_key", index=allrows.index)
-    allrows.loc[has_fine_id, "fine_id_source"] = "fine_id"
-    allrows["_dedup_key"] = pd.Series(
-        [
-            f"FID:{fid}" if isinstance(fid, str) else
-            f"NAT:{ccn}|{date}|{ptype}|{amount}|{occ}"
-            for fid, ccn, date, ptype, amount, occ in zip(
-                allrows["fine_id"],
-                allrows["ccn"],
-                allrows["penalty_date"],
-                allrows["penalty_type"],
-                allrows["fine_amount_usd"],
-                allrows["_occurrence"],
-            )
-        ],
-        index=allrows.index,
+    allrows["_dedup_key"] = _natural_key(allrows)
+
+    # Fine ID is not part of the identity, but an event first seen in a period
+    # before 202606 would otherwise lose the ID that CMS assigned to it later.
+    # Carry the first non-null ID of each event onto every sighting of it, so the
+    # kept row keeps the CMS identifier as an attribute.
+    filled = allrows.groupby("_dedup_key")["fine_id"].transform(
+        lambda s: s.dropna().iloc[0] if s.notna().any() else pd.NA
+    )
+    backfilled = int((filled.notna() & allrows["fine_id"].isna()).sum())
+    allrows["fine_id"] = filled
+    allrows["fine_id_source"] = (
+        allrows["fine_id"].notna().map({True: "fine_id", False: "natural_key"})
     )
 
     # Keep the first sighting of each event: contemporaneous attributes, and the
     # earliest period is the one whose window the penalty actually fell in
     allrows = allrows.sort_values(["_stamp", "ccn", "penalty_date"])
     deduped = allrows.drop_duplicates(subset="_dedup_key", keep="first").copy()
+
+    if backfilled:
+        log.add(
+            step="integrate",
+            rule="Q2",
+            target="Fact_Penalty_Event",
+            rows_affected=backfilled,
+            detail=(
+                "sightings that gained a Fine ID from a later period "
+                "(the event predates the 202606 release that added the column)"
+            ),
+        )
+    _audit_key_against_fine_id(allrows, log)
 
     log.add(
         step="clean",
@@ -479,6 +474,97 @@ def build_fact_penalty_event(
         ),
     )
     return out
+
+
+def _natural_key(rows: pd.DataFrame) -> pd.Series:
+    """The one identity of a penalty event, valid in every era.
+
+    Built as text rather than a tuple so that a re-run produces byte-identical
+    keys: the money is formatted to a fixed 2 decimal places and every missing
+    value becomes the same literal, so nothing depends on how pandas happens to
+    render a float or a NaT today.
+    """
+    ccn = rows["ccn"].astype("string").fillna("?")
+    date = rows["penalty_date"].dt.strftime("%Y-%m-%d").astype("string").fillna("?")
+    ptype = rows["penalty_type"].astype("string").fillna("?")
+    amount = rows["fine_amount_usd"].map(
+        lambda v: "-" if pd.isna(v) else f"{v:.2f}"
+    ).astype("string")
+    occurrence = rows["_occurrence"].astype("string")
+    return ccn + "|" + date + "|" + ptype + "|" + amount + "|" + occurrence
+
+
+def _audit_key_against_fine_id(rows: pd.DataFrame, log: RunLog) -> None:
+    """Use Fine ID to audit the natural key, in the periods that have both.
+
+    Two ways the natural key could be wrong, and Fine ID can see both:
+      * one key covering several Fine IDs -> the key merged distinct penalties
+      * one Fine ID spread over several keys -> the key split a single penalty
+        (would happen if CMS revised the amount or the date between periods)
+
+    Reported rather than raised: this is evidence for the run log, and the
+    assignment asks for the checks to be visible, not for the pipeline to hide
+    a disagreement by refusing to finish.
+    """
+    known = rows[rows["fine_id"].notna()]
+    if known.empty:
+        log.add(
+            step="load",
+            rule="key_audit",
+            target="Fact_Penalty_Event",
+            detail="no period carries Fine ID — the natural key cannot be audited here",
+        )
+        return
+
+    ids_per_key = known.groupby("_dedup_key")["fine_id"].nunique()
+    keys_per_id = known.groupby("fine_id")["_dedup_key"].nunique()
+    merged = int((ids_per_key > 1).sum())
+    split = int((keys_per_id > 1).sum())
+
+    log.add(
+        step="load",
+        rule="key_audit",
+        target="Fact_Penalty_Event",
+        rows_affected=merged + split,
+        detail=(
+            f"audited {len(ids_per_key):,} keys against {len(keys_per_id):,} Fine IDs: "
+            f"{merged} keys covering more than one ID, "
+            f"{split} IDs spread over more than one key"
+        ),
+    )
+    if merged or split:
+        log.add(
+            step="load",
+            rule="key_audit",
+            target="Fact_Penalty_Event",
+            rows_affected=merged + split,
+            detail="! natural key disagrees with Fine ID — must be resolved before trusting M5",
+        )
+
+    # Residual: an occurrence whose identical siblings all got a Fine ID but it
+    # did not. That means an earlier period reported more identical rows than the
+    # period that can actually tell them apart, i.e. CMS corrected its own file.
+    # Left in place and flagged rather than dropped, following the project's rule
+    # that a suspect row keeps its value and gets a flag.
+    group = ["ccn", "penalty_date", "penalty_type", "fine_amount_usd"]
+    sibling_has_id = rows.groupby(group, dropna=False)["fine_id"].transform(
+        lambda s: s.notna().any()
+    )
+    orphan = rows["fine_id"].isna() & sibling_has_id.fillna(False)
+    n_orphan = int(rows.loc[orphan, "_dedup_key"].nunique())
+    if n_orphan:
+        money = rows.loc[orphan].drop_duplicates("_dedup_key")["fine_amount_usd"].sum()
+        log.add(
+            step="load",
+            rule="key_audit",
+            target="Fact_Penalty_Event",
+            rows_affected=n_orphan,
+            detail=(
+                f"{n_orphan} event(s) worth ${money:,.0f} were reported as identical "
+                f"duplicates by an earlier period but appear once in a period that has "
+                f"Fine ID — kept and flagged, the source corrected itself"
+            ),
+        )
 
 
 def _penalty_attributes(
