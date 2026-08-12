@@ -2,6 +2,7 @@
 # โหลดใหม่ได้จาก CMS API เสมอ ดู 01_Raw_Data/README.md
 Group01_ElderCareDW/01_Raw_Data/cms_snapshots/*.zip
 Group01_ElderCareDW/01_Raw_Data/cms_snapshots/_probe/
+Group01_ElderCareDW/01_Raw_Data/cms_snapshots/_probe2019/
 Group01_ElderCareDW/01_Raw_Data/external/*
 !Group01_ElderCareDW/01_Raw_Data/**/.gitkeep
 
