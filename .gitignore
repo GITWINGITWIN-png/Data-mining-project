@@ -3,8 +3,12 @@
 Group01_ElderCareDW/01_Raw_Data/cms_snapshots/*.zip
 Group01_ElderCareDW/01_Raw_Data/cms_snapshots/_probe/
 Group01_ElderCareDW/01_Raw_Data/cms_snapshots/_probe2019/
+Group01_ElderCareDW/01_Raw_Data/cms_snapshots/_extracted/
 Group01_ElderCareDW/01_Raw_Data/external/*
 !Group01_ElderCareDW/01_Raw_Data/**/.gitkeep
+
+# ---- ตารางบันทึกการทำงานของ ETL: สร้างใหม่ได้ทุกครั้งที่รัน ----
+Group01_ElderCareDW/02_ETL/_logs/
 
 # ---- ผลลัพธ์ที่สร้างใหม่ได้ ----
 Group01_ElderCareDW/03_Data_Warehouse/*.duckdb
