@@ -1,0 +1,4 @@
+# ติดตั้งด้วย  python -m pip install -r requirements.txt
+# ทดสอบแล้วบน Python 3.14 (Windows)
+pandas>=2.2
+duckdb>=1.0

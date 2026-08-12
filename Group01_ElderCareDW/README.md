@@ -6,7 +6,7 @@
 คลังข้อมูลและแดชบอร์ดสำหรับธุรกิจสถานดูแลผู้สูงอายุ (Skilled Nursing Facility)
 จากข้อมูลเปิดของ CMS สหรัฐอเมริกา ปี 2562–2569
 
-> **สถานะ:** ออกแบบเสร็จแล้ว · ยังไม่เริ่ม ETL
+> **สถานะ:** ออกแบบเสร็จแล้ว · ETL ของ Dimension ทั้ง 6 ตารางเสร็จและตรวจผ่านแล้ว · ยังไม่ทำตาราง Fact
 > เอกสารออกแบบฉบับเต็มอยู่ที่ [`06_Report/eldercare_dw_design.pdf`](06_Report/eldercare_dw_design.pdf)
 
 ---
@@ -16,8 +16,8 @@
 | โฟลเดอร์ | เนื้อหา | สถานะ |
 |---|---|---|
 | `01_Raw_Data/` | ข้อมูลดิบจาก CMS (ไม่เก็บใน git — ดู [README](01_Raw_Data/README.md)) | มีคำสั่งโหลดแล้ว |
-| `02_ETL/` | สคริปต์ Extract → Clean → Transform → Integrate → Load | ว่าง |
-| `03_Data_Warehouse/` | ไฟล์ฐานข้อมูล DuckDB + สคริปต์สร้างตาราง | ว่าง |
+| `02_ETL/` | สคริปต์ Extract → Clean → Transform → Integrate → Load ([README](02_ETL/README.md)) | Dimension เสร็จ · Fact ยังไม่ทำ |
+| `03_Data_Warehouse/` | ไฟล์ฐานข้อมูล DuckDB (สร้างจาก `02_ETL/run_dims.py` ไม่เก็บใน git) | มี 6 Dimension แล้ว |
 | `04_Dashboard/` | แอป Streamlit | ว่าง |
 | `05_AI_Usage_Log/` | บันทึกการใช้ Generative AI ([README](05_AI_Usage_Log/README.md)) | เริ่มบันทึกแล้ว |
 | `06_Report/` | เอกสารออกแบบ (LaTeX) และรายงานฉบับส่ง | เอกสารออกแบบเสร็จ |
