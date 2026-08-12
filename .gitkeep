@@ -1,0 +1,7 @@
+cd /home/panguin/Projects/eldercare-dw
+touch Group01_ElderCareDW/01_Raw_Data/external/.gitkeep \
+      Group01_ElderCareDW/02_ETL/.gitkeep \
+      Group01_ElderCareDW/03_Data_Warehouse/.gitkeep \
+      Group01_ElderCareDW/04_Dashboard/.gitkeep \
+      Group01_ElderCareDW/05_AI_Usage_Log/.gitkeep \
+      Group01_ElderCareDW/06_Report/figures/.gitkeep

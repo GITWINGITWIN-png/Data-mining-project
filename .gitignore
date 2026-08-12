@@ -1,0 +1,29 @@
+# ---- ข้อมูลดิบ: ไม่เก็บใน git ----
+# โหลดใหม่ได้จาก CMS API เสมอ ดู 01_Raw_Data/README.md
+Group01_ElderCareDW/01_Raw_Data/cms_snapshots/*.zip
+Group01_ElderCareDW/01_Raw_Data/cms_snapshots/_probe/
+Group01_ElderCareDW/01_Raw_Data/external/*
+!Group01_ElderCareDW/01_Raw_Data/**/.gitkeep
+
+# ---- ผลลัพธ์ที่สร้างใหม่ได้ ----
+Group01_ElderCareDW/03_Data_Warehouse/*.duckdb
+Group01_ElderCareDW/03_Data_Warehouse/*.db
+
+# ---- LaTeX ----
+build/
+*.aux
+*.log
+*.out
+*.toc
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.xdv
+
+# ---- Python (ตอนเริ่มเขียน ETL) ----
+__pycache__/
+.venv/
+*.pyc
+
+# ---- ระบบปฏิบัติการ ----
+.DS_Store
