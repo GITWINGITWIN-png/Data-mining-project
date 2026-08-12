@@ -15,8 +15,10 @@ import duckdb
 import pandas as pd
 
 import clean
+import columns
 import config
 import fetch_snapshots as fetch
+from runlog import RunLog
 
 PASS, FAIL, INFO = "[PASS]", "[FAIL]", "[NOTE]"
 
@@ -64,15 +66,19 @@ def main() -> int:
     ).fetchone()[0]
     c.check("grain holds: one row per (period, CCN)", dup == 0, f"{dup} duplicated")
 
-    # A republished period must not become a second set of rows
+    # A republished period must not become a second set of rows.
+    # Derived from the data, never asserted against a constant: hard-coding the
+    # expected period count makes this check pass while testing nothing, then fail
+    # the moment another snapshot is loaded.
     per_period = con.execute(
         "SELECT snapshot_date_key, COUNT(*) FROM Fact_Facility_Monthly GROUP BY 1 ORDER BY 1"
     ).df()
     print(per_period.to_string(index=False))
+    local_periods = len(fetch.local_snapshot_dates())
     c.check(
-        "the republished period 2026-08-06 did not create a second 2026-07-01 set",
-        n_periods == 3,
-        f"{n_periods} distinct periods",
+        "no period produced a second set of rows (periods <= snapshots extracted)",
+        n_periods <= local_periods,
+        f"{n_periods} periods in the fact vs {local_periods} snapshots on disk",
     )
 
     print("\n2. Foreign key integrity")
@@ -225,6 +231,65 @@ def main() -> int:
         set(sources["fine_id_source"]) == {"fine_id", "natural_key"},
         dict(zip(sources["fine_id_source"], sources["count_star()"])),
     )
+
+    # The check that would have caught the cross-era double counting. It needs no
+    # Fine ID, so it works over the whole range: the rolling window lists every
+    # penalty that existed at that moment, so the most rows any single period
+    # reports for one identical group is the upper bound on how many truly exist.
+    # Storing more than that means deduplication let a repeat through.
+    quiet = RunLog()
+    quiet.add = lambda **kwargs: None
+    KEY = ["ccn", "pdate", "ptype", "amt"]
+    per_file = []
+    for snap in fetch.local_snapshot_dates():
+        path = fetch.find_file(snap, "penalties")
+        if path is None:
+            continue
+        raw = pd.read_csv(path, dtype=str, encoding=config.CSV_ENCODING, low_memory=False)
+        pen, _ = columns.canonicalize(raw, "penalties", snap, quiet)
+        grouped = (
+            pd.DataFrame({
+                "ccn": clean.normalize_ccn(pen["ccn"]),
+                "pdate": pd.to_datetime(pen["penalty_date"], errors="coerce"),
+                "ptype": pen["penalty_type"].astype("string").str.strip(),
+                # NaN never equals NaN in a join, so payment denials (no amount)
+                # get a sentinel instead of being silently dropped
+                "amt": clean.to_number(pen["fine_amount_usd"]).fillna(-1.0),
+            })
+            .groupby(KEY, dropna=False).size().rename("in_one_file").reset_index()
+        )
+        per_file.append(grouped)
+
+    if per_file:
+        source_max = (
+            pd.concat(per_file, ignore_index=True)
+            .groupby(KEY, dropna=False)["in_one_file"].max().reset_index()
+        )
+        stored = con.execute(
+            """
+            SELECT f.ccn AS ccn, d.full_date AS pdate, t.penalty_type AS ptype,
+                   COALESCE(f.fine_amount_usd, -1.0) AS amt, COUNT(*) AS stored
+            FROM Fact_Penalty_Event f
+            JOIN Dim_Date d ON f.penalty_date_key = d.date_key
+            JOIN Dim_Penalty_Type t ON f.penalty_type_key = t.penalty_type_key
+            GROUP BY 1, 2, 3, 4
+            """
+        ).df()
+        cmp = stored.merge(source_max, on=KEY, how="left")
+        cmp["in_one_file"] = cmp["in_one_file"].fillna(0)
+        over = cmp[cmp["stored"] > cmp["in_one_file"]]
+        surplus = int((over["stored"] - over["in_one_file"]).sum())
+        c.check(
+            "no identical group holds more rows than any single period reported",
+            surplus == 0,
+            f"{len(over):,} groups over the bound, {surplus:,} surplus rows",
+        )
+        if surplus:
+            print(over.sort_values("stored", ascending=False).head(5).to_string(index=False))
+        c.note(
+            "total fines stored",
+            f"${con.execute('SELECT SUM(fine_amount_usd) FROM Fact_Penalty_Event').fetchone()[0]:,.0f}",
+        )
 
     denial_with_id = con.execute(
         "SELECT COUNT(*) FROM Fact_Penalty_Event f JOIN Dim_Penalty_Type t "

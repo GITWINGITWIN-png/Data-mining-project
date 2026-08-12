@@ -78,7 +78,13 @@ FOREIGN_KEYS = {
 
 
 def write_tables(tables: dict[str, pd.DataFrame], log: RunLog) -> None:
-    """Write every DataFrame into DuckDB, replacing what is there."""
+    """Write every DataFrame into DuckDB, replacing what is there.
+
+    Only call this once `validate` has come back clean. The checks are worth
+    nothing if the rows land in the warehouse either way — a caller that writes
+    first and prints the problems afterwards has published data it already knows
+    is wrong, and whoever opens the dashboard next will never see the message.
+    """
     config.ensure_dirs()
     con = duckdb.connect(str(config.DB_PATH))
     try:
@@ -96,8 +102,20 @@ def write_tables(tables: dict[str, pd.DataFrame], log: RunLog) -> None:
                 rows_affected=len(frame),
                 detail=f"wrote {name} into {config.DB_PATH.name}",
             )
+    finally:
+        con.close()
 
-        # The run log has to accumulate across runs, so it is appended
+
+def write_run_log(log: RunLog) -> None:
+    """Append this run's log to the database.
+
+    Written whether or not the run passed, because a failed run is exactly the
+    one whose log needs keeping. The table accumulates across runs instead of
+    being replaced.
+    """
+    config.ensure_dirs()
+    con = duckdb.connect(str(config.DB_PATH))
+    try:
         frame = log.to_frame()
         con.register("_runlog", frame)
         con.execute(

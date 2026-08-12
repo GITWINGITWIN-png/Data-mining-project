@@ -42,13 +42,21 @@ PROVIDER_INFO_DATASTORE = f"{CMS_BASE}/provider-data/api/1/datastore/query/4pq5-
 #    2026 normal   NH_ProviderInfo_Jun2026.csv
 #    2026 some     4pq5-n9py_2026-07-29_NH_ProviderInfo_Jul2026.csv
 # ---------------------------------------------------------------------
+#  Two of these need more than a prefix and a month suffix, because 2019 renamed
+#  the file itself rather than just decorating it:
+#    state averages   StateAverages_Download.csv  ->  NH_StateUSAverages_Jun2026.csv
+#                     (the "US" was added later, so it has to be optional)
+#    VBP              SNF VBP Facility Performance.csv  (spaces, no FY prefix)
+#                     ->  FY_2026_SNF_VBP_Facility_Performance.csv
+#  "Facility" stays mandatory in the VBP pattern so it cannot match the
+#  FY_YYYY_SNF_VBP_Aggregate_Performance.csv sitting beside it.
 FILE_PATTERNS = {
     "provider_info": r"(?:^|_)(?:NH_)?ProviderInfo(?:_Download)?(?:_[A-Za-z]{3}\d{4})?\.csv$",
     "penalties": r"(?:^|_)(?:NH_)?Penalties(?:_Download)?(?:_[A-Za-z]{3}\d{4})?\.csv$",
     "survey_summary": r"(?:^|_)(?:NH_)?SurveySummary(?:_Download)?(?:_[A-Za-z]{3}\d{4})?\.csv$",
     "citations": r"(?:^|_)(?:NH_)?CitationDescriptions(?:_Download)?(?:_[A-Za-z]{3}\d{4})?\.csv$",
-    "state_averages": r"(?:^|_)(?:NH_)?StateUSAverages(?:_Download)?(?:_[A-Za-z]{3}\d{4})?\.csv$",
-    "vbp": r"FY_\d{4}_SNF_VBP_Facility_Performance\.csv$",
+    "state_averages": r"(?:^|_)(?:NH_)?State(?:US)?Averages(?:_Download)?(?:_[A-Za-z]{3}\d{4})?\.csv$",
+    "vbp": r"(?:FY[_ ]\d{4}[_ ])?SNF[_ ]VBP[_ ]Facility[_ ]Performance\.csv$",
 }
 
 # Without this file a period cannot produce dimensions at all — skip the period.
