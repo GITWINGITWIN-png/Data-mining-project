@@ -1,4 +1,9 @@
 # ติดตั้งด้วย  python -m pip install -r requirements.txt
-# ทดสอบแล้วบน Python 3.14 (Windows)
-pandas>=2.2
-duckdb>=1.0
+# ทดสอบแล้วบน Python 3.14 — Windows (pandas 2.x) และ Fedora (pandas 3.0.5)
+#
+# ขอบบนของ pandas ตั้งไว้ที่ 4 ไม่ใช่ปล่อยเปิด เพราะ >=2.2 เฉย ๆ กินข้ามเวอร์ชันหลัก
+# ได้ไม่จำกัด แล้ว pandas เปลี่ยนพฤติกรรมเรื่อง dtype/NA ในเวอร์ชันหลักเสมอ
+# ซึ่งเป็นจุดที่ไปป์ไลน์นี้พึ่งพาโดยตรง (nullable boolean ใน Dim_Facility,
+# groupby(dropna=False) ตอน dedup, .astype("string") ตอนสร้าง natural key)
+pandas>=2.2,<4
+duckdb>=1.0,<2
