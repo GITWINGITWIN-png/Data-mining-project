@@ -1,0 +1,9 @@
+# ติดตั้งด้วย  python -m pip install -r requirements.txt
+# ต้องสร้างคลังข้อมูลให้เสร็จก่อน — ดู README.md
+#
+# ขอบบนตั้งไว้ด้วยเหตุผลเดียวกับ 02_ETL/requirements.txt: ปล่อยเปิดไว้แล้ว
+# เครื่องแต่ละคนจะได้เวอร์ชันหลักคนละตัว
+pandas>=2.2,<4
+duckdb>=1.0,<2
+streamlit>=1.49,<2
+plotly>=5.18,<7
