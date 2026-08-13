@@ -40,6 +40,35 @@ REST API (JSON) · SNF VBP Facility Performance (CSV รายปีงบปร
 รายละเอียดทั้งหมด — คำถามทางธุรกิจ 8 ข้อ, measure 10 ตัว, ปัญหาคุณภาพข้อมูล 8 ประเภท,
 การประกาศ Grain และผัง Star Schema — อยู่ในเอกสารออกแบบ
 
+## วิธีรันทั้งโครงงานตั้งแต่ต้น
+
+เริ่มจากโฟลเดอร์เปล่าได้เลย ข้อมูลดิบไม่ได้เก็บใน git แต่โหลดใหม่ได้จาก CMS เสมอ
+
+```bash
+python -m pip install -r requirements.txt      # ติดตั้งครั้งเดียวครบทุกส่วน
+
+cd 02_ETL
+python fetch_snapshots.py --dates 2019-01-17 2026-06-24 2026-07-29 2026-08-06
+python run_dims.py && python run_facts.py      # ต้องรันคู่กันเสมอ
+python verify_dims.py && python verify_facts.py
+
+cd ../03_Data_Warehouse
+python build_warehouse.py --report             # ใส่ข้อบังคับและสร้างวิว
+
+cd ../04_Dashboard
+python verify_dashboard.py                     # ตรวจก่อน (56 ข้อ)
+streamlit run app.py                           # เปิดที่ http://localhost:8501
+```
+
+ขั้นตอนโหลดข้อมูลใช้เวลาสักพักเพราะงวด `2026-07-29` มีขนาด 622 MB
+งวดที่โหลดแล้วจะถูกข้ามในการรันครั้งถัดไป
+
+| ชุดตรวจ | ตรวจอะไร | ผลล่าสุด |
+|---|---|---|
+| `02_ETL/verify_dims.py` | dimension ทั้งหก รวม SCD2 | 22 ผ่าน 0 ตก |
+| `02_ETL/verify_facts.py` | fact ทั้งสอง รวมการกระทบยอดกับตัวเลขที่ CMS คำนวณเอง | 22 ผ่าน 0 ตก |
+| `04_Dashboard/verify_dashboard.py` | measure ตรงกับคลัง และครบตามเกณฑ์โจทย์ | 56 ผ่าน 0 ตก |
+
 ## การสร้างเอกสารรายงานใหม่
 
 ต้องใช้ **XeLaTeX** และฟอนต์ตระกูล **TLWG** (Laksaman, Garuda) — ฟอนต์ละตินล้วนจะทำให้

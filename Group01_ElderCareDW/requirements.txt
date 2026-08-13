@@ -1,0 +1,22 @@
+# ElderCare Insight — ติดตั้งทุกอย่างที่โครงงานนี้ต้องใช้ ด้วยคำสั่งเดียว
+#
+#     python -m pip install -r requirements.txt
+#
+# ไฟล์นี้ไม่ได้เขียนรายชื่อแพ็กเกจซ้ำ แต่ **อ้างถึงไฟล์ของแต่ละโฟลเดอร์** เพราะถ้าคัดลอก
+# รายชื่อมาไว้ที่นี่ด้วย จะกลายเป็นสองที่ที่ต้องแก้ให้ตรงกัน แล้ววันหนึ่งก็จะไม่ตรงกัน
+# — ปัญหาเดียวกับที่ `queries.MEASURES_SQL` กับ `views.sql` ต้องมีเทสต์คอยจับ
+# ที่นี่กันไว้ตั้งแต่แรกได้ เพราะ pip อ่าน -r ซ้อนกันได้อยู่แล้ว
+#
+# ถ้าจะรันเฉพาะบางส่วน ติดตั้งจากไฟล์ของโฟลเดอร์นั้นโดยตรงก็ได้
+#
+#     02_ETL/requirements.txt          ETL อย่างเดียว (pandas, duckdb)
+#     04_Dashboard/requirements.txt    แดชบอร์ด (เพิ่ม streamlit, plotly)
+#
+# `03_Data_Warehouse/build_warehouse.py` ใช้ duckdb อย่างเดียว จึงไม่มีไฟล์ของตัวเอง
+# — ติดตั้งจาก 02_ETL แล้วครอบคลุมอยู่แล้ว
+#
+# ทดสอบแล้วบน Python 3.14 — Fedora (pandas 3.0.5, duckdb 1.5.5, streamlit 1.61.1)
+# และ Windows (pandas 2.x)
+
+-r 02_ETL/requirements.txt
+-r 04_Dashboard/requirements.txt
