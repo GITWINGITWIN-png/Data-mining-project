@@ -18,9 +18,18 @@ DPI = 150
 
 
 def save(figure, name: str) -> None:
+    """Write each figure twice: PNG to look at, PDF to typeset.
+
+    The PNG is for quick viewing and for anything that needs a bitmap. The PDF
+    is vector, and it is the one the report should `\includegraphics` —
+    XeLaTeX scales it without softening, where a 150-dpi PNG blown up to column
+    width is exactly the fuzzy-chart problem this project already hit once on
+    the dashboard.
+    """
     figure.savefig(f"{name}.png", dpi=DPI, bbox_inches="tight")
+    figure.savefig(f"{name}.pdf", bbox_inches="tight")
     matplotlib.pyplot.close(figure)
-    print("wrote", f"{name}.png")
+    print("wrote", f"{name}.png + .pdf")
 
 
 def main() -> None:
