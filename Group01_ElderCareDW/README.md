@@ -1,7 +1,8 @@
 # ElderCare Insight — Mini Data Warehouse & Analytics Dashboard
 
 **Group Assignment #1 — Data Mining / Data Warehouse**
-กลุ่มที่ 01 · สมาชิก: _(ยังไม่เติม)_ , _(ยังไม่เติม)_ , _(ยังไม่เติม)_
+กลุ่มที่ 01 · สมาชิก: Kitsadee Thongbankao (6710503721) ·
+Kawinphop Junjuae (6710503739) · Pirapat Rojbadin (6710504182)
 
 คลังข้อมูลและแดชบอร์ดสำหรับธุรกิจสถานดูแลผู้สูงอายุ (Skilled Nursing Facility)
 จากข้อมูลเปิดของ CMS สหรัฐอเมริกา ปี 2562–2569
@@ -108,4 +109,6 @@ Centers for Medicare & Medicaid Services (CMS), *Provider Data Catalog — Nursi
 - โจทย์กำหนดให้โฟลเดอร์ Google Drive มี `README.pdf` หรือ `README.txt`
   ก่อนส่งให้ export ไฟล์นี้เป็นหนึ่งในสองรูปแบบนั้น
 - ต้องเปิดสิทธิ์โฟลเดอร์เป็น **Anyone with the link can view**
-- ยังต้องเติม: หมายเลขกลุ่มและชื่อสมาชิกสามคน (ทั้งในไฟล์นี้และหน้าปกเอกสารออกแบบ)
+- ยังต้องเติม: ลิงก์ Google Drive และลิงก์แดชบอร์ด (หัวข้อ 10 ของ `eldercare_report.tex`)
+  · ช่อง **ผู้ใช้งาน** รายรายการใน `05_AI_Usage_Log/AI_Usage_Log.md` (ต้องให้เจ้าของ session
+  เป็นคนเติมเอง ห้ามเดา)
