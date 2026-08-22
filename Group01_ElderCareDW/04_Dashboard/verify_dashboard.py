@@ -186,6 +186,14 @@ def main() -> int:
     # -----------------------------------------------------------------
     print("\n5. The brief's minimums")
     # -----------------------------------------------------------------
+    # ชุดตรวจนี้เคยอ่านแต่ app.py ทำให้ไม่เห็นว่าแท็บข้อเสนอแนะของ app_mpl.py
+    # เป็นข้อความที่พิมพ์ตัวเลขฝังไว้ ไม่ได้คำนวณจากตัวกรอง — 56/56 จึงผ่านทั้งที่
+    # แดชบอร์ดชุดที่ใช้ถ่ายภาพลงรายงานมีปัญหาอยู่
+    app_mpl = (HERE / "app_mpl.py").read_text(encoding="utf-8")
+    c.check("app_mpl.py สร้าง insight จากตัวกรอง ไม่ได้พิมพ์ฝังไว้",
+            "insights.build(" in app_mpl or "load_insights(" in app_mpl,
+            "เรียก insights.build ผ่าน load_insights()")
+
     app = (HERE / "app.py").read_text(encoding="utf-8")
     n_metrics = len(re.findall(r"\.metric\(", app))
     n_charts = len(re.findall(r"st\.plotly_chart\(", app))
