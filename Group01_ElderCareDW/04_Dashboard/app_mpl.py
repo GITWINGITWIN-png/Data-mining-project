@@ -742,11 +742,12 @@ with tab_workforce:
 # ---------------------------------------------------------------------
 with tab_trend:
     st.subheader("BQ5 — แนวโน้ม 2562 ถึง 2569 ฟื้นจาก COVID แล้วหรือยัง")
-    caveat(
-        "ไม่มี snapshot ของปี 2563-2564 เลย หน้านี้จึงเป็นการเทียบ "
-        "<b>สองปลาย</b> ไม่ใช่เส้นแนวโน้ม — บอกได้ว่าลงเอยตรงไหนเทียบกับจุดเริ่ม "
-        "แต่บอกไม่ได้ว่าก้นเหวอยู่ตรงไหนหรือฟื้นตอนไหน"
+    st.markdown("#### เส้นแนวโน้มเต็มช่วง 32 งวด")
+    st.caption(
+        "ก่อนหน้านี้คลังมีแค่ 4 งวด หน้านี้จึงเทียบได้แค่สองปลายและสรุปผิดว่า "
+        "\"แทบไม่เปลี่ยน\" — ตอนนี้เห็นทั้งก้นเหวและการฟื้น"
     )
+    show(charts.trend_lines(period_trend(exclude_suspect)))
 
     # This tab is a two-endpoint comparison against the 2019 era, so selecting
     # the 2019 period in the sidebar would ask it to compare that period with

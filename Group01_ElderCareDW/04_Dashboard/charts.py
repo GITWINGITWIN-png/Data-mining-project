@@ -929,6 +929,66 @@ def matched_cohort_slopes(context: dict):
     return fig
 
 
+def trend_lines(trend: pd.DataFrame):
+    """BQ5 across every period the warehouse holds.
+
+    This replaces a two-point slope chart, and the replacement is the whole
+    point: with only 2019 and 2026 loaded, occupancy looked like it had drifted
+    up half a point and the obvious reading was that nothing much happened.
+    Thirty-two periods show what actually happened — a 13-point collapse into
+    mid-2021 and a five-year climb back — and that the endpoints coincide is
+    the least interesting thing about the series.
+
+    Four panels rather than one axis with four lines: occupancy is a
+    percentage, hours are a rate, stars run 1-5 and deficiencies are a count.
+    Sharing an axis would need either a scale that flattens three of them or
+    the index trick, and an index hides the levels that make the story legible.
+    """
+    apply_style()
+    x = pd.to_datetime(trend["period"])
+    panels = [
+        ("occupancy", lambda c: c * 100, "occupancy %", GOOD),
+        ("nurse_hprd", lambda c: c, "nurse hours per resident/day", ACCENT),
+        ("avg_rating", lambda c: c, "average star rating", WARN),
+        ("deficiencies", lambda c: c, "deficiencies per facility", INK_MUTED),
+    ]
+    fig, axes = plt.subplots(len(panels), 1, figsize=(9.6, 10.4), sharex=True,
+                             gridspec_kw={"hspace": 0.22})
+
+    # The trough is found from the data, not hard-coded, so the annotation
+    # stays honest if more periods are loaded later.
+    trough_at = trend["occupancy"].idxmin()
+    trough_x = x.iloc[trough_at]
+
+    for ax, (column, scale, label, color) in zip(axes, panels):
+        y = scale(trend[column].astype("float64"))
+        ax.plot(x, y, color=color, linewidth=2.1, zorder=3)
+        ax.scatter(x, y, s=18, color=color, zorder=4)
+        ax.axvline(trough_x, color=BASELINE, linewidth=1, linestyle=(0, (4, 3)), zorder=2)
+        ax.set_ylabel(label)
+        ax.yaxis.grid(True)
+        ax.set_axisbelow(True)
+        ax.annotate(f"{y.iloc[-1]:,.1f}", xy=(x.iloc[-1], y.iloc[-1]), xytext=(6, 0),
+                    textcoords="offset points", va="center", fontsize=9,
+                    fontweight="bold", color=color)
+
+    axes[0].annotate(
+        f"occupancy bottoms out\n{trough_x:%b %Y} · {trend['occupancy'].min() * 100:.1f}%",
+        xy=(trough_x, trend["occupancy"].min() * 100), xytext=(12, 18),
+        textcoords="offset points", fontsize=9, color=INK_SECONDARY,
+        arrowprops=dict(arrowstyle="-", color=INK_MUTED, linewidth=0.8),
+    )
+    _titles(
+        axes[0],
+        "The COVID trough, and a five-year climb back",
+        f"{len(trend)} periods, {x.iloc[0]:%b %Y} to {x.iloc[-1]:%b %Y} · "
+        "every facility open in each period",
+    )
+    axes[-1].set_xlabel("period (Processing Date)")
+    fig.tight_layout()
+    return fig
+
+
 def rating_migration(pairs: pd.DataFrame, context: dict):
     """BQ5 — where each 2019 star rating ended up in 2026.
 
