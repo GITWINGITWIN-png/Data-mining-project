@@ -63,6 +63,29 @@ PROVIDER_INFO_2026 = {
 }
 
 # ---------------------------------------------------------------------
+#  2021 era — "Provider ..." prefixed names (seen 2021-01-27 to 2023-01-02)
+#
+#  CMS ran a third layout between the two this project first met. It reads like
+#  the 2026 era — full sentences, mixed case — but the identifying column is
+#  `Federal Provider Number`, not `CMS Certification Number (CCN)`, and the
+#  address fields all carry a `Provider ` prefix that the 2026 files dropped.
+#  Everything else already matches the 2026 names, so this map only restates
+#  the five that moved; the rest are inherited below.
+#
+#  Genuinely absent in this era, and left to fill as empty: chain columns
+#  (added 2025), total nursing turnover (added late 2022), latitude/longitude
+#  (this era ships a single combined `Location`), and the urban flag.
+# ---------------------------------------------------------------------
+PROVIDER_INFO_2021 = {
+    **PROVIDER_INFO_2026,
+    "ccn": "Federal Provider Number",
+    "city": "Provider City",
+    "state_code": "Provider State",
+    "zip_code": "Provider Zip Code",
+    "county_parish": "Provider County Name",
+}
+
+# ---------------------------------------------------------------------
 #  2019 era — uppercase abbreviations (seen in 2019-01-17)
 #  Absent in this era: urban_flag, chain_*, abuse_icon, turnover, lat/long,
 #  which matches what rule Q7 in the design document describes.
@@ -108,6 +131,14 @@ PENALTIES_2026 = {
     "processing_date": "Processing Date",
 }
 
+# 2021 era penalties — same layout, different identifying column. `Fine ID`
+# does not exist before 2026-06, so it fills as empty and `facts._natural_key`
+# carries the identity, exactly as it already does for the 2019 era.
+PENALTIES_2021 = {
+    **PENALTIES_2026,
+    "ccn": "Federal Provider Number",
+}
+
 PENALTIES_2019 = {
     "ccn": "provnum",
     "penalty_date": "pnlty_date",
@@ -120,8 +151,16 @@ PENALTIES_2019 = {
 
 # Newest era first. The era is detected from the columns actually present.
 ERAS = {
-    "provider_info": [("2026", PROVIDER_INFO_2026), ("2019", PROVIDER_INFO_2019)],
-    "penalties": [("2026", PENALTIES_2026), ("2019", PENALTIES_2019)],
+    "provider_info": [
+        ("2026", PROVIDER_INFO_2026),
+        ("2021", PROVIDER_INFO_2021),
+        ("2019", PROVIDER_INFO_2019),
+    ],
+    "penalties": [
+        ("2026", PENALTIES_2026),
+        ("2021", PENALTIES_2021),
+        ("2019", PENALTIES_2019),
+    ],
 }
 
 # Without these a file is unusable
@@ -137,10 +176,16 @@ def detect_era(logical: str, columns) -> tuple[str, dict[str, str]]:
     The period's date is deliberately not used, because CMS did not change the
     format on calendar-year boundaries. Looking at the file itself is safer.
     """
-    available = set(columns)
+    # Case-insensitive, because CMS changed only the capitalisation between
+    # some periods: 2019 ships `OVERALL_RATING` and 2020 ships `Overall_Rating`
+    # in an otherwise identical file. Matching exactly would score 2020 as a
+    # near-miss on its own era and silently drop the star ratings — the file
+    # still loads, so nothing raises, and the quality measures just arrive
+    # empty. Folding case keeps the two as one era, which is what they are.
+    available = {str(c).strip().lower() for c in columns}
     best_name, best_map, best_hits = "unknown", {}, -1
     for name, mapping in ERAS[logical]:
-        hits = sum(1 for src in mapping.values() if src in available)
+        hits = sum(1 for src in mapping.values() if src.lower() in available)
         if hits > best_hits:
             best_name, best_map, best_hits = name, mapping, hits
     if best_hits <= 0:
@@ -162,7 +207,12 @@ def canonicalize(
     df = df.rename(columns=lambda c: c.strip())
     era, mapping = detect_era(logical, df.columns)
 
-    present = {canon: src for canon, src in mapping.items() if src in df.columns}
+    # Resolve each mapped name against the file's own spelling, folding case
+    # for the same reason `detect_era` does. `actual` maps lower-case -> the
+    # column as it is really spelled, so the rename below uses the real one.
+    actual = {str(c).lower(): c for c in df.columns}
+    present = {canon: actual[src.lower()]
+               for canon, src in mapping.items() if src.lower() in actual}
     out = df[list(present.values())].copy()
     out.columns = list(present.keys())
 

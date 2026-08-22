@@ -8,6 +8,8 @@ dimensions they point at.
 
 from __future__ import annotations
 
+import dataclasses
+
 import pandas as pd
 
 import clean
@@ -117,26 +119,56 @@ def drop_republished_periods(
     its overlap test asks for effective < previous expiry, and equality slips
     through.
 
-    The later file wins because it carries the corrections.
+    The later file wins because it carries the corrections — but **per table,
+    not per period**. Collapsing whole frames is what made this function lose
+    data: 2026-08-06 republishes Processing Date 2026-07-01 carrying only
+    ProviderInfo and StateAverages, so as the later publication it beat
+    2026-07-29 outright and took that period's entire Penalties file down with
+    it — 16,166 rows, the whole tail of the fine history. The tell was the
+    rolling-window duplicate share falling from 38% to 0% while every check
+    still passed, because nothing verified that an extracted file was read.
+
+    A republication only supersedes what it actually contains. Where the later
+    file is silent, the earlier one still stands.
     """
     by_stamp: dict[pd.Timestamp, SnapshotFrame] = {}
-    dropped = []
+    merged = []
     for frame in sorted(frames, key=lambda f: f.snapshot_date):
         existing = by_stamp.get(frame.processing_date)
-        if existing is not None:
-            dropped.append((existing.snapshot_date, frame.snapshot_date, frame.processing_date))
-        by_stamp[frame.processing_date] = frame
+        if existing is None:
+            by_stamp[frame.processing_date] = frame
+            continue
 
-    for old, new, stamp in dropped:
+        kept_penalties = frame.penalties
+        rescued = None
+        if kept_penalties is None and existing.penalties is not None:
+            kept_penalties = existing.penalties
+            rescued = len(existing.penalties)
+
+        by_stamp[frame.processing_date] = dataclasses.replace(
+            frame, penalties=kept_penalties
+        )
+        merged.append(
+            (existing.snapshot_date, frame.snapshot_date, frame.processing_date, rescued)
+        )
+
+    for old, new, stamp, rescued in merged:
+        detail = (
+            f"period {old} and {new} share Processing Date {stamp.date()}; "
+            f"keeping {new} (the later publication carries the corrections)"
+        )
+        if rescued is not None:
+            detail += (
+                f"; {new} publishes no Penalties file, so {old}'s {rescued:,} "
+                f"penalty rows are kept rather than dropped with the period"
+            )
         log.add(
             step="clean",
             rule="Q2",
             snapshot_date=new,
-            target="all tables",
-            detail=(
-                f"period {old} and {new} share Processing Date {stamp.date()}; "
-                f"keeping {new} (the later publication carries the corrections)"
-            ),
+            target="all tables" if rescued is None else "provider_info (penalties kept from earlier)",
+            rows_affected=rescued or 0,
+            detail=detail,
         )
     return sorted(by_stamp.values(), key=lambda f: f.processing_date)
 

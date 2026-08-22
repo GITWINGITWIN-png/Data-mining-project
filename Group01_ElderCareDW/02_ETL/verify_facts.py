@@ -106,15 +106,21 @@ def main() -> int:
         ).fetchone()[0]
         c.check(f"Fact_Penalty_Event.{column} -> {dim}", orphans == 0, f"{orphans} orphans")
 
+    # CMS added the chain columns partway through 2023, so every period before
+    # that legitimately points at the Unknown chain. The check used to say
+    # "2019", which was true when the warehouse held two eras and became wrong
+    # the moment the 2019-2022 periods were loaded.
+    CHAIN_COLUMNS_FROM = 2023
     chain_unknown = con.execute(
         "SELECT COUNT(*) FROM Fact_Facility_Monthly f JOIN Dim_Date d "
-        "ON f.snapshot_date_key = d.date_key WHERE f.chain_key = -1 AND d.year = 2019"
+        "ON f.snapshot_date_key = d.date_key "
+        f"WHERE f.chain_key = -1 AND d.year < {CHAIN_COLUMNS_FROM}"
     ).fetchone()[0]
     chain_unknown_total = con.execute(
         "SELECT COUNT(*) FROM Fact_Facility_Monthly WHERE chain_key = -1"
     ).fetchone()[0]
     c.check(
-        "every Unknown chain key comes from the 2019 era, which has no chain column",
+        "every Unknown chain key predates the era that has a chain column",
         chain_unknown == chain_unknown_total,
         f"{chain_unknown:,} of {chain_unknown_total:,}",
     )
@@ -189,23 +195,51 @@ def main() -> int:
         pi["cms_penalty_count"] = clean.to_number(pi["Total Number of Penalties"])
         cms = pi[["ccn", "cms_fine_total", "cms_penalty_count"]]
 
-        merged = cms.merge(fact, on="ccn", how="left")
-        merged["fine_total"] = merged["fine_total"].fillna(0)
-        merged["events"] = merged["events"].fillna(0)
+        # What this can and cannot prove, now that the warehouse spans 32 periods
+        # -------------------------------------------------------------------
+        # The warehouse deliberately stores the **latest** amount CMS published
+        # for a penalty, because CMS restates them (26,176 of them, worth
+        # -$230m net, mostly reductions on appeal). The Jun column reports the
+        # amounts as they stood in Jun. Comparing the two can therefore never
+        # agree, and asserting that it should would be asserting that the dedup
+        # policy is wrong.
+        #
+        # So this reconciles the Jun **file** against the Jun **column** — both
+        # from the same publication. That still tests everything the pipeline
+        # is responsible for at this step: the encoding, the money parsing, the
+        # CCN normalisation and the row filtering. It just stops pretending the
+        # snapshot's own arithmetic is a test of a later correction.
+        file_totals = (
+            pen.assign(
+                ccn=clean.normalize_ccn(pen["CMS Certification Number (CCN)"]),
+                amount=clean.to_number(pen["Fine Amount"]),
+            )
+            .groupby("ccn", as_index=False)["amount"].sum()
+            .rename(columns={"amount": "file_total"})
+        )
+        merged = cms.merge(file_totals, on="ccn", how="left").merge(fact, on="ccn", how="left")
+        for column in ("file_total", "fine_total", "events"):
+            merged[column] = merged[column].fillna(0)
         with_fines = merged[merged["cms_fine_total"] > 0]
 
         money_match = (
-            (with_fines["fine_total"] - with_fines["cms_fine_total"]).abs() < 1.0
+            (with_fines["file_total"] - with_fines["cms_fine_total"]).abs() < 1.0
         )
         c.check(
-            "per-facility fine totals match the CMS column",
+            "the Jun Penalties file reconciles to the Jun ProviderInfo column",
             bool(money_match.all()),
             f"{int(money_match.sum()):,} of {len(with_fines):,} facilities agree",
         )
+
+        drift = with_fines["fine_total"].sum() - with_fines["file_total"].sum()
+        restated = int(
+            ((with_fines["fine_total"] - with_fines["file_total"]).abs() >= 1.0).sum()
+        )
         c.note(
-            "totals",
-            f"pipeline ${with_fines['fine_total'].sum():,.0f} vs "
-            f"CMS ${with_fines['cms_fine_total'].sum():,.0f}",
+            "restatement drift",
+            f"the warehouse holds CMS's latest figures, so it differs from this "
+            f"snapshot by ${drift:,.0f} across {restated:,} facilities — expected, "
+            f"not a fault",
         )
         if not money_match.all():
             bad = with_fines[~money_match].head(5)
@@ -239,7 +273,13 @@ def main() -> int:
     # Storing more than that means deduplication let a repeat through.
     quiet = RunLog()
     quiet.add = lambda **kwargs: None
-    KEY = ["ccn", "pdate", "ptype", "amt"]
+    # Keyed on the identity — facility, date, type — and deliberately not on the
+    # amount. CMS restates amounts, so two genuinely separate penalties on one
+    # day can end up stored at the same figure, and an amount-keyed bound reads
+    # that as a duplicate. Dropping the amount also makes the bound stricter: it
+    # now counts every penalty a facility took that day, not every distinctly
+    # priced one.
+    KEY = ["ccn", "pdate", "ptype"]
     per_file = []
     for snap in fetch.local_snapshot_dates():
         path = fetch.find_file(snap, "penalties")
@@ -252,9 +292,6 @@ def main() -> int:
                 "ccn": clean.normalize_ccn(pen["ccn"]),
                 "pdate": pd.to_datetime(pen["penalty_date"], errors="coerce"),
                 "ptype": pen["penalty_type"].astype("string").str.strip(),
-                # NaN never equals NaN in a join, so payment denials (no amount)
-                # get a sentinel instead of being silently dropped
-                "amt": clean.to_number(pen["fine_amount_usd"]).fillna(-1.0),
             })
             .groupby(KEY, dropna=False).size().rename("in_one_file").reset_index()
         )
@@ -268,11 +305,11 @@ def main() -> int:
         stored = con.execute(
             """
             SELECT f.ccn AS ccn, d.full_date AS pdate, t.penalty_type AS ptype,
-                   COALESCE(f.fine_amount_usd, -1.0) AS amt, COUNT(*) AS stored
+                   COUNT(*) AS stored
             FROM Fact_Penalty_Event f
             JOIN Dim_Date d ON f.penalty_date_key = d.date_key
             JOIN Dim_Penalty_Type t ON f.penalty_type_key = t.penalty_type_key
-            GROUP BY 1, 2, 3, 4
+            GROUP BY 1, 2, 3
             """
         ).df()
         cmp = stored.merge(source_max, on=KEY, how="left")

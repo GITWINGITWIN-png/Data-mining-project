@@ -28,7 +28,19 @@ LOG_DIR = ETL_DIR / "_logs"                       # ETL run log (git ignored)
 #  Sources
 # ---------------------------------------------------------------------
 CMS_BASE = "https://data.cms.gov"
-ARCHIVE_API = f"{CMS_BASE}/provider-data/api/1/archive/aggregate/theme/nursing-homes/relative"
+
+# Endpoint A — the list of every archived snapshot CMS still publishes.
+#
+# The `/relative` variant this used to point at now answers 200 with
+# `{"data": [], "total_items": 0}`: a successful-looking empty list, not an
+# error. That silently capped the project at the four snapshots already on
+# disk and is why 2020-2022 looked unobtainable. Without the suffix the same
+# endpoint returns all 88 monthly archives, 2019-01-17 to 2026-08-06.
+#
+# Checked 22 Aug 2026. If this ever returns an empty list again, treat it as a
+# fault and not as "CMS has no archives" — `fetch_snapshots.py` refuses to
+# proceed on an empty list for exactly that reason.
+ARCHIVE_API = f"{CMS_BASE}/provider-data/api/1/archive/aggregate/theme/nursing-homes"
 
 # Endpoint C — current data. Only usable to validate the most recent period.
 PROVIDER_INFO_DATASTORE = f"{CMS_BASE}/provider-data/api/1/datastore/query/4pq5-n9py/0"
