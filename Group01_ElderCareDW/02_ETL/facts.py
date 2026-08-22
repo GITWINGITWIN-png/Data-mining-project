@@ -120,13 +120,21 @@ def _ownership_key(df: pd.DataFrame, dim_ownership: pd.DataFrame) -> pd.Series:
     )
 
 
-def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame, era_has_chain: bool) -> pd.Series:
-    """Blank chain means Independent, but only when the era actually has the column.
+def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame) -> pd.Series:
+    """Blank chain means Independent, but only when the file carries the column.
 
-    In the 2019 era there is no chain column at all, so every row points at
-    Unknown: not knowing is not the same as knowing there is no chain.
+    Where there is no chain column at all, every row points at Unknown: not
+    knowing is not the same as knowing there is no chain.
+
+    Whether the column exists is read from the frame, not from the era's name.
+    This used to test `era != "2019"`, which was true of every era that existed
+    when it was written. It is wrong twice over: the 2020 era has no chain
+    column, and neither do the 2026-era files before 2025-07 — CMS only added
+    `Chain Name` in that release, so 26 of the 32 periods have nothing to read.
+    The old test made all of them assert "in no chain" on no evidence. Same test
+    as dimensions.build_dim_chain, so the two cannot disagree.
     """
-    if not era_has_chain:
+    if "chain_name" not in df.columns or df["chain_name"].isna().all():
         return pd.Series(UNKNOWN_KEY, index=df.index, dtype="int64")
 
     mapping = dict(zip(dim_chain["chain_name"], dim_chain["chain_key"]))
@@ -134,6 +142,43 @@ def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame, era_has_chain: bool) -
     keys = names.map(mapping)
     keys = keys.where(names.notna(), INDEPENDENT_CHAIN_KEY)   # blank -> Independent
     return keys.fillna(UNKNOWN_KEY).astype("int64")
+
+
+def _denial_days(pen: pd.DataFrame, frame: SnapshotFrame, log: RunLog) -> pd.Series:
+    """Payment denial length, with negative durations blanked rather than stored.
+
+    Rule Q4 flags implausible values and keeps them, because an occupancy of
+    105% is surprising but could be true. A negative duration is a different
+    thing: it is not unlikely, it is not a duration at all, and no reading of
+    the source makes it one. So the row survives — the penalty really was
+    imposed — but the length becomes NULL, which says "not known" instead of
+    asserting a number that cannot be right.
+
+    One row in the full 2019-2026 set trips this: CCN 056056, penalty dated
+    2018-12-31, reported as -526 days. schema.sql refuses to store it, and it
+    should; this is where it stops being stored.
+    """
+    days = clean.to_number(pen["payment_denial_days"])
+    negative = days < 0
+    n_negative = int(negative.sum())
+    if n_negative:
+        log.add(
+            step="clean",
+            # Not Q4: Q4 flags and keeps, this blanks. Logged under its own rule
+            # name so a reader counting Q4 flags does not find a row that was
+            # handled by the opposite policy.
+            rule="impossible_value",
+            snapshot_date=frame.snapshot_date,
+            target="Fact_Penalty_Event",
+            rows_affected=n_negative,
+            detail=(
+                f"{n_negative} payment denial(s) reported a negative length "
+                f"(min {int(days[negative].min())} days) — the event is kept, the "
+                f"length set to NULL because a negative duration is not a duration"
+            ),
+        )
+        days = days.mask(negative)
+    return days
 
 
 def _date_key(dates: pd.Series) -> pd.Series:
@@ -191,7 +236,7 @@ def build_fact_facility_monthly(
             ),
             "geography_key": _geography_key(df, dims["Dim_Geography"]),
             "ownership_key": _ownership_key(df, dims["Dim_Ownership"]),
-            "chain_key": _chain_key(df, dims["Dim_Chain"], frame.era != "2019"),
+            "chain_key": _chain_key(df, dims["Dim_Chain"]),
             "ccn": df["ccn"],
             "certified_beds": beds,
             "avg_residents_per_day": residents,
@@ -322,7 +367,7 @@ def build_fact_penalty_event(
     reported again in up to 36 periods. Deduplication is therefore the whole
     job of this function, and it uses **one** identity for every era (rule Q2):
 
-        ccn | penalty_date | penalty_type | fine_amount | occurrence
+        ccn | penalty_date | penalty_type | occurrence
 
     `occurrence` is the row's position inside its own identical group, which is
     what keeps genuinely distinct penalties apart: one facility can be fined
@@ -351,21 +396,16 @@ def build_fact_penalty_event(
             "penalty_type": clean.normalize_text(pen["penalty_type"]),
             "fine_id": clean.normalize_text(pen["fine_id"]) if "fine_id" in pen else pd.NA,
             "fine_amount_usd": clean.to_number(pen["fine_amount_usd"]),
-            "payment_denial_days": _clean_denial_days(
-                clean.to_number(pen["payment_denial_days"]), frame.snapshot_date, log
-            ),
+            "payment_denial_days": _denial_days(pen, frame, log),
             "_snapshot": frame.snapshot_date,
             "_stamp": frame.processing_date,
             "_era": frame.era,
         })
-        # Occurrence number inside an identical group, so two genuinely separate
-        # penalties of the same type on the same day stay distinct rows.
-        #
-        # The amount is deliberately **not** part of this grouping, and must
-        # stay out of it to match `_natural_key`. CMS revises fine amounts after
-        # publication — Fine ID 24224 appears as $6,776 in one snapshot and
-        # $10,425 in a later one — so grouping on the amount makes every
-        # revision look like a brand new penalty.
+        # Occurrence number inside an identical group, so two separate
+        # penalties stay distinct rows instead of collapsing into one
+        # The amount is deliberately not in this grouping, and must stay out to
+        # match `_natural_key`. CMS revises amounts after publication, so
+        # grouping on one makes every revision look like a new penalty.
         df["_occurrence"] = df.groupby(
             ["ccn", "penalty_date", "penalty_type"], dropna=False
         ).cumcount()
@@ -385,34 +425,6 @@ def build_fact_penalty_event(
 
     allrows["_dedup_key"] = _natural_key(allrows)
 
-    # Where CMS supplies a Fine ID, that ID is the identity and the natural key
-    # is only a stand-in for the eras that predate it. Folding every sighting of
-    # one Fine ID onto a single key catches the three things the natural key
-    # cannot see, because each of them changes a field the key is built from:
-    #   * CMS restates the penalty date  (Fine ID 137711 moved 2026-01-07 -> 02-27)
-    #   * a facility is re-certified under a new CCN and its fines follow it
-    #     (146201 -> 14E812, three penalties in 2024)
-    #   * one ID covers two same-day rows, which the occurrence counter splits
-    # Twelve rows in 79,821 — small, but they are wrong rather than uncertain,
-    # and leaving them would keep the Fine ID audit permanently red for a reason
-    # nobody would remember.
-    with_id = allrows["fine_id"].notna() & (allrows["fine_id"].astype("string") != "")
-    if with_id.any():
-        canonical = allrows.loc[with_id].groupby("fine_id")["_dedup_key"].transform("first")
-        folded = int((canonical != allrows.loc[with_id, "_dedup_key"]).sum())
-        allrows.loc[with_id, "_dedup_key"] = canonical
-        if folded:
-            log.add(
-                step="integrate",
-                rule="Q2",
-                target="Fact_Penalty_Event",
-                rows_affected=folded,
-                detail=(
-                    f"{folded} sightings shared a Fine ID but differed in CCN, date or "
-                    "occurrence; folded onto the Fine ID's identity"
-                ),
-            )
-
     # Fine ID is not part of the identity, but an event first seen in a period
     # before 202606 would otherwise lose the ID that CMS assigned to it later.
     # Carry the first non-null ID of each event onto every sighting of it, so the
@@ -426,14 +438,55 @@ def build_fact_penalty_event(
         allrows["fine_id"].notna().map({True: "fine_id", False: "natural_key"})
     )
 
-    # Keep the LAST sighting of each event. The amount is the field CMS revises,
-    # and the most recently published figure is the corrected one — it is also
-    # what the facility's own CMS page shows. The time axis is unaffected:
-    # analysis reads `penalty_date`, the day the penalty was issued, not the
-    # period that happened to publish it.
+    # Identity, in priority order: CMS's own Fine ID where it exists, the
+    # natural key where it does not.
+    #
+    # The natural key alone is not enough once two Fine-ID-bearing periods
+    # overlap. Their windows both cover 2023-2026, so the same fine is reported
+    # twice — and where CMS revised the amount or the date between publications,
+    # the natural key differs on the two sightings and stores one penalty as
+    # two. Measured on Jun+Jul 2026: 493 Fine IDs spread across more than one
+    # key, inflating 444 facilities by $18.5M against CMS's own column.
+    #
+    # This is the hybrid the docstring above used to reject, and it is safe now
+    # only because the backfill ran first. The old objection was that an event
+    # seen both before and after the 202606 release would get two identities —
+    # a natural key in the early period and a Fine ID in the late one. Backfill
+    # removes that: the early sighting has already inherited the Fine ID of its
+    # own natural-key group, so both sightings resolve to the same identity.
+    # Without that step this would double-store instead of deduplicate.
+    allrows["_identity"] = allrows["fine_id"].where(
+        allrows["fine_id"].notna(), allrows["_dedup_key"]
+    )
+
+    # Keep the LAST sighting of each event.
+    #
+    # This was `first` while the warehouse held four periods, on the reasoning
+    # that the earliest sighting carries the amount CMS's own per-facility total
+    # was computed from. Over 32 periods that reasoning inverts: the earliest
+    # sighting of a 2016 penalty comes from a 2019 file, and CMS has restated
+    # thousands of amounts since. Reconciled against the Jun 2026 column,
+    # `first` agrees for 1,760 of 6,563 facilities and `last` for 6,119 — the
+    # published column reports current amounts, so the current sighting is the
+    # one that matches it, and it is also what the facility's own CMS page
+    # shows. The 444 that still differ are fines CMS restated between the Jun
+    # and Jul 2026 releases, which no Jun-dated column can know about.
     allrows = allrows.sort_values(["_stamp", "ccn", "penalty_date"])
-    revised = _count_revised_amounts(allrows, log)
-    deduped = allrows.drop_duplicates(subset="_dedup_key", keep="last").copy()
+    deduped = allrows.drop_duplicates(subset="_identity", keep="last").copy()
+
+    by_natural_key_only = allrows["_dedup_key"].nunique()
+    if by_natural_key_only != len(deduped):
+        log.add(
+            step="clean",
+            rule="Q2",
+            target="Fact_Penalty_Event",
+            rows_affected=by_natural_key_only - len(deduped),
+            detail=(
+                f"Fine ID collapsed {by_natural_key_only - len(deduped):,} event(s) that the "
+                f"natural key had split — the same fine reported with a revised amount or "
+                f"date by a later period"
+            ),
+        )
 
     if backfilled:
         log.add(
@@ -516,81 +569,13 @@ def build_fact_penalty_event(
     return out
 
 
-def _count_revised_amounts(rows: pd.DataFrame, log: RunLog) -> int:
-    """Log how many penalties CMS restated, and by how much.
-
-    Worth recording rather than silently collapsing: a revision is the source
-    talking, and the difference between the first and last published figure is
-    the size of the correction the warehouse is choosing to accept. Without
-    this line in the run log there would be no way to tell a dedup that merged
-    revisions from one that lost rows.
-    """
-    money = rows.dropna(subset=["fine_amount_usd"])
-    spread = money.groupby("_dedup_key")["fine_amount_usd"].agg(["nunique", "first", "last"])
-    changed = spread[spread["nunique"] > 1]
-    if changed.empty:
-        return 0
-    delta = float((changed["last"] - changed["first"]).sum())
-    log.add(
-        step="integrate",
-        rule="Q2",
-        target="Fact_Penalty_Event",
-        rows_affected=len(changed),
-        detail=(
-            f"{len(changed):,} penalties were restated by CMS between publications; "
-            f"keeping the latest figure changes the stored total by ${delta:,.0f}"
-        ),
-    )
-    return len(changed)
-
-
-def _clean_denial_days(days: pd.Series, snapshot_date: str, log: RunLog) -> pd.Series:
-    """Reject a negative payment-denial length instead of storing it.
-
-    CMS publishes a handful of these: CCN 056056 carries -526 days from the
-    2019-04 snapshot onward, which is a denial whose end date precedes its
-    start. A length cannot be negative, so the value is not a small error to
-    keep — it is not a length at all.
-
-    Nulled rather than clamped to zero. Zero would assert the denial lasted no
-    time, which is a claim the source does not make and which would quietly
-    join the sum of denial days as if it were measured. Null says "this period
-    did not report a usable length", which is what happened.
-    """
-    bad = days.notna() & (days < 0)
-    if bad.any():
-        log.add(
-            step="clean",
-            rule="Q4",
-            snapshot_date=snapshot_date,
-            target="Fact_Penalty_Event.payment_denial_days",
-            rows_affected=int(bad.sum()),
-            detail=(
-                f"{int(bad.sum())} payment denial rows report a negative length "
-                f"(worst {days[bad].min():.0f} days) — set to null, not clamped, "
-                "because a negative length is not a measurement"
-            ),
-        )
-        days = days.mask(bad)
-    return days
-
-
 def _natural_key(rows: pd.DataFrame) -> pd.Series:
     """The one identity of a penalty event, valid in every era.
 
     Built as text rather than a tuple so that a re-run produces byte-identical
-    keys: every missing value becomes the same literal, so nothing depends on
-    how pandas happens to render a value today.
-
-    **The fine amount is not part of the identity.** It used to be, and with
-    only four snapshots that looked fine. Across 33 snapshots it is not: CMS
-    revises amounts after publication, so the same penalty arrives at $6,776 in
-    one period and $10,425 in a later one, and an amount-bearing key files
-    those as two penalties. That inflated the table to 110,193 events over
-    77,975 real (facility, date, type) combinations and the stored total to
-    $2.7bn. What identifies a penalty is who was penalised, when, and for what
-    — the amount is an attribute of it, and one CMS reserves the right to
-    change.
+    keys: the money is formatted to a fixed 2 decimal places and every missing
+    value becomes the same literal, so nothing depends on how pandas happens to
+    render a float or a NaT today.
     """
     ccn = rows["ccn"].astype("string").fillna("?")
     date = rows["penalty_date"].dt.strftime("%Y-%m-%d").astype("string").fillna("?")
@@ -689,7 +674,7 @@ def _penalty_attributes(
             "_snapshot": frame.snapshot_date,
             "geography_key": _geography_key(df, dims["Dim_Geography"]),
             "ownership_key": _ownership_key(df, dims["Dim_Ownership"]),
-            "chain_key": _chain_key(df, dims["Dim_Chain"], frame.era != "2019"),
+            "chain_key": _chain_key(df, dims["Dim_Chain"]),
         }))
     attrs = pd.concat(rows, ignore_index=True)
     return attrs.drop_duplicates(subset=["ccn", "_snapshot"], keep="first")

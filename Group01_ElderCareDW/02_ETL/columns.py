@@ -63,29 +63,6 @@ PROVIDER_INFO_2026 = {
 }
 
 # ---------------------------------------------------------------------
-#  2021 era — "Provider ..." prefixed names (seen 2021-01-27 to 2023-01-02)
-#
-#  CMS ran a third layout between the two this project first met. It reads like
-#  the 2026 era — full sentences, mixed case — but the identifying column is
-#  `Federal Provider Number`, not `CMS Certification Number (CCN)`, and the
-#  address fields all carry a `Provider ` prefix that the 2026 files dropped.
-#  Everything else already matches the 2026 names, so this map only restates
-#  the five that moved; the rest are inherited below.
-#
-#  Genuinely absent in this era, and left to fill as empty: chain columns
-#  (added 2025), total nursing turnover (added late 2022), latitude/longitude
-#  (this era ships a single combined `Location`), and the urban flag.
-# ---------------------------------------------------------------------
-PROVIDER_INFO_2021 = {
-    **PROVIDER_INFO_2026,
-    "ccn": "Federal Provider Number",
-    "city": "Provider City",
-    "state_code": "Provider State",
-    "zip_code": "Provider Zip Code",
-    "county_parish": "Provider County Name",
-}
-
-# ---------------------------------------------------------------------
 #  2019 era — uppercase abbreviations (seen in 2019-01-17)
 #  Absent in this era: urban_flag, chain_*, abuse_icon, turnover, lat/long,
 #  which matches what rule Q7 in the design document describes.
@@ -120,6 +97,58 @@ PROVIDER_INFO_2019 = {
     "processing_date": "FILEDATE",
 }
 
+# ---------------------------------------------------------------------
+#  2020 era — full sentence names, but keyed on "Federal Provider Number"
+#  (2020-10-09 through 2023-04-26, 11 of the 31 quarterly periods)
+#
+#  This era only appeared once the quarterly set was loaded. The original
+#  four-period sample jumped straight from 2019-01 to 2026-06 and never saw it,
+#  so the pipeline had no mapping and refused to read the file — correctly, and
+#  loudly, which is what `MUST_HAVE` is for.
+#
+#  CMS renamed the key column twice: PROVNUM -> Federal Provider Number ->
+#  CMS Certification Number (CCN). The middle era is otherwise close to the 2026
+#  layout, but the address block differs ("Provider City" vs "City/Town") and it
+#  carries no chain columns, no Urban flag and no separate latitude/longitude —
+#  it has a combined "Location" field instead, which is deliberately not mapped
+#  rather than parsed apart.
+# ---------------------------------------------------------------------
+PROVIDER_INFO_2020 = {
+    "ccn": "Federal Provider Number",
+    "provider_name": "Provider Name",
+    "address": "Provider Address",
+    "city": "Provider City",
+    "state_code": "Provider State",
+    "zip_code": "Provider Zip Code",
+    "county_ssa": "Provider SSA County Code",
+    "county_parish": "Provider County Name",
+    "ownership_type": "Ownership Type",
+    "certified_beds": "Number of Certified Beds",
+    "avg_residents_per_day": "Average Number of Residents per Day",
+    "avg_residents_footnote": "Average Number of Residents per Day Footnote",
+    "provider_type": "Provider Type",
+    "resides_in_hospital": "Provider Resides in Hospital",
+    "legal_business_name": "Legal Business Name",
+    "first_approved_date": "Date First Approved to Provide Medicare and Medicaid Services",
+    "ccrc_flag": "Continuing Care Retirement Community",
+    "special_focus_status": "Special Focus Status",
+    "abuse_icon": "Abuse Icon",
+    "changed_ownership_12mo": "Provider Changed Ownership in Last 12 Months",
+    "overall_rating": "Overall Rating",
+    "overall_rating_footnote": "Overall Rating Footnote",
+    "health_inspection_rating": "Health Inspection Rating",
+    "staffing_rating": "Staffing Rating",
+    "staffing_rating_footnote": "Staffing Rating Footnote",
+    "reported_total_nurse_hprd": "Reported Total Nurse Staffing Hours per Resident per Day",
+    "reported_rn_hprd": "Reported RN Staffing Hours per Resident per Day",
+    # Turnover arrives partway through this era (present by 2022-10, absent in
+    # 2020-10). Mapped here because the name is identical once it appears;
+    # periods without it get a null column and a Q7 log line.
+    "total_nursing_turnover_pct": "Total nursing staff turnover",
+    "cycle1_total_deficiencies": "Rating Cycle 1 Total Number of Health Deficiencies",
+    "processing_date": "Processing Date",
+}
+
 PENALTIES_2026 = {
     "ccn": "CMS Certification Number (CCN)",
     "penalty_date": "Penalty Date",
@@ -131,12 +160,16 @@ PENALTIES_2026 = {
     "processing_date": "Processing Date",
 }
 
-# 2021 era penalties — same layout, different identifying column. `Fine ID`
-# does not exist before 2026-06, so it fills as empty and `facts._natural_key`
-# carries the identity, exactly as it already does for the 2019 era.
-PENALTIES_2021 = {
-    **PENALTIES_2026,
+PENALTIES_2020 = {
     "ccn": "Federal Provider Number",
+    "penalty_date": "Penalty Date",
+    "penalty_type": "Penalty Type",
+    "fine_amount_usd": "Fine Amount",
+    "payment_denial_start_date": "Payment Denial Start Date",
+    "payment_denial_days": "Payment Denial Length in Days",
+    "processing_date": "Processing Date",
+    # No Fine ID: CMS added that column with the 202606 release, which is the
+    # whole reason Fact_Penalty_Event needs a natural key at all.
 }
 
 PENALTIES_2019 = {
@@ -153,12 +186,12 @@ PENALTIES_2019 = {
 ERAS = {
     "provider_info": [
         ("2026", PROVIDER_INFO_2026),
-        ("2021", PROVIDER_INFO_2021),
+        ("2020", PROVIDER_INFO_2020),
         ("2019", PROVIDER_INFO_2019),
     ],
     "penalties": [
         ("2026", PENALTIES_2026),
-        ("2021", PENALTIES_2021),
+        ("2020", PENALTIES_2020),
         ("2019", PENALTIES_2019),
     ],
 }
@@ -176,15 +209,26 @@ def detect_era(logical: str, columns) -> tuple[str, dict[str, str]]:
     The period's date is deliberately not used, because CMS did not change the
     format on calendar-year boundaries. Looking at the file itself is safer.
     """
-    # Case-insensitive, because CMS changed only the capitalisation between
-    # some periods: 2019 ships `OVERALL_RATING` and 2020 ships `Overall_Rating`
-    # in an otherwise identical file. Matching exactly would score 2020 as a
-    # near-miss on its own era and silently drop the star ratings — the file
-    # still loads, so nothing raises, and the quality measures just arrive
-    # empty. Folding case keeps the two as one era, which is what they are.
+    # Case-insensitive throughout, because CMS changed only the capitalisation
+    # between some periods: 2019 ships `OVERALL_RATING` and 2020-01 ships
+    # `Overall_Rating` in an otherwise identical file. Matching exactly still
+    # picks the right era — only the hit count drops — so nothing raises and
+    # the star ratings simply arrive empty. Folding case keeps the two as the
+    # one era they are.
     available = {str(c).strip().lower() for c in columns}
+
+    # The eras share many column names — "Provider Name" and "Ownership Type"
+    # are identical in 2020 and 2026 — so a plain hit count can be won by the
+    # wrong map. The key column is what actually separates them (PROVNUM ->
+    # Federal Provider Number -> CMS Certification Number (CCN)), and a map
+    # whose key column is absent cannot be the right one at any hit count.
+    candidates = [
+        (name, mapping) for name, mapping in ERAS[logical]
+        if mapping["ccn"].lower() in available
+    ] or list(ERAS[logical])
+
     best_name, best_map, best_hits = "unknown", {}, -1
-    for name, mapping in ERAS[logical]:
+    for name, mapping in candidates:
         hits = sum(1 for src in mapping.values() if src.lower() in available)
         if hits > best_hits:
             best_name, best_map, best_hits = name, mapping, hits
@@ -207,9 +251,9 @@ def canonicalize(
     df = df.rename(columns=lambda c: c.strip())
     era, mapping = detect_era(logical, df.columns)
 
-    # Resolve each mapped name against the file's own spelling, folding case
-    # for the same reason `detect_era` does. `actual` maps lower-case -> the
-    # column as it is really spelled, so the rename below uses the real one.
+    # Resolve each mapped name against the file's own spelling, folding case for
+    # the same reason `detect_era` does. `actual` maps lower-case -> the column
+    # as it is really spelled, so the rename below uses the real one.
     actual = {str(c).lower(): c for c in df.columns}
     present = {canon: actual[src.lower()]
                for canon, src in mapping.items() if src.lower() in actual}

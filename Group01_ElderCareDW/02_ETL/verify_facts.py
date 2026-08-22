@@ -11,6 +11,8 @@ pipeline agreeing with itself.
 
 from __future__ import annotations
 
+import re
+
 import duckdb
 import pandas as pd
 
@@ -106,23 +108,47 @@ def main() -> int:
         ).fetchone()[0]
         c.check(f"Fact_Penalty_Event.{column} -> {dim}", orphans == 0, f"{orphans} orphans")
 
-    # CMS added the chain columns partway through 2023, so every period before
-    # that legitimately points at the Unknown chain. The check used to say
-    # "2019", which was true when the warehouse held two eras and became wrong
-    # the moment the 2019-2022 periods were loaded.
-    CHAIN_COLUMNS_FROM = 2023
-    chain_unknown = con.execute(
-        "SELECT COUNT(*) FROM Fact_Facility_Monthly f JOIN Dim_Date d "
-        "ON f.snapshot_date_key = d.date_key "
-        f"WHERE f.chain_key = -1 AND d.year < {CHAIN_COLUMNS_FROM}"
-    ).fetchone()[0]
-    chain_unknown_total = con.execute(
-        "SELECT COUNT(*) FROM Fact_Facility_Monthly WHERE chain_key = -1"
+    # An Unknown chain is only acceptable when the source file had no chain
+    # column at all, which is a property of the era, not of the calendar year.
+    # This used to test `d.year = 2019` and passed only because the four-period
+    # sample stopped there; the 2019 layout actually runs to 2020-07, so three
+    # legitimately chain-less periods failed once the full set was loaded.
+    #
+    # Testing the era directly needs no boundary date: a period with no chain
+    # column is entirely Unknown, while a period that has one resolves most
+    # rows. So every Unknown row must sit in a period where *every* row is
+    # Unknown. That still catches the regression worth catching — a period that
+    # silently lost the chain column would be all-Unknown among neighbours that
+    # are not, and the counts below make it visible.
+    chain_unknown_total, chain_unknown_in_blank_periods = con.execute(
+        """
+        WITH per_period AS (
+            SELECT f.snapshot_date_key,
+                   COUNT(*) AS rows_in_period,
+                   SUM(CASE WHEN f.chain_key = -1 THEN 1 ELSE 0 END) AS unknown_rows
+            FROM Fact_Facility_Monthly f
+            GROUP BY f.snapshot_date_key
+        )
+        SELECT SUM(unknown_rows),
+               SUM(CASE WHEN unknown_rows = rows_in_period THEN unknown_rows ELSE 0 END)
+        FROM per_period
+        """
+    ).fetchone()
+    blank_periods = con.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT f.snapshot_date_key
+            FROM Fact_Facility_Monthly f
+            GROUP BY f.snapshot_date_key
+            HAVING SUM(CASE WHEN f.chain_key = -1 THEN 1 ELSE 0 END) = COUNT(*)
+        )
+        """
     ).fetchone()[0]
     c.check(
-        "every Unknown chain key predates the era that has a chain column",
-        chain_unknown == chain_unknown_total,
-        f"{chain_unknown:,} of {chain_unknown_total:,}",
+        "every Unknown chain key comes from an era whose files carry no chain column",
+        chain_unknown_total == chain_unknown_in_blank_periods,
+        f"{chain_unknown_in_blank_periods:,} of {chain_unknown_total:,} "
+        f"sit in the {blank_periods} period(s) that have no chain data at all",
     )
 
     print("\n3. Canary row CCN 015009, period 2026-06-01")
@@ -195,20 +221,18 @@ def main() -> int:
         pi["cms_penalty_count"] = clean.to_number(pi["Total Number of Penalties"])
         cms = pi[["ccn", "cms_fine_total", "cms_penalty_count"]]
 
-        # What this can and cannot prove, now that the warehouse spans 32 periods
-        # -------------------------------------------------------------------
-        # The warehouse deliberately stores the **latest** amount CMS published
-        # for a penalty, because CMS restates them (26,176 of them, worth
-        # -$230m net, mostly reductions on appeal). The Jun column reports the
-        # amounts as they stood in Jun. Comparing the two can therefore never
-        # agree, and asserting that it should would be asserting that the dedup
-        # policy is wrong.
+        # What this can and cannot prove across 32 periods
+        # ------------------------------------------------
+        # The warehouse keeps the latest amount CMS published for a penalty, and
+        # CMS restates them. The Jun column reports the amounts as they stood in
+        # Jun, so any fine restated between Jun and Jul disagrees by design —
+        # 444 facilities' worth. Asserting equality would be asserting that the
+        # dedup policy is wrong.
         #
-        # So this reconciles the Jun **file** against the Jun **column** — both
-        # from the same publication. That still tests everything the pipeline
-        # is responsible for at this step: the encoding, the money parsing, the
-        # CCN normalisation and the row filtering. It just stops pretending the
-        # snapshot's own arithmetic is a test of a later correction.
+        # So this reconciles the Jun **file** against the Jun **column**, both
+        # from one publication. That still tests everything the pipeline owns at
+        # this step — encoding, money parsing, CCN normalisation, row filtering
+        # — without pretending a later correction is a pipeline fault.
         file_totals = (
             pen.assign(
                 ccn=clean.normalize_ccn(pen["CMS Certification Number (CCN)"]),
@@ -230,20 +254,19 @@ def main() -> int:
             bool(money_match.all()),
             f"{int(money_match.sum()):,} of {len(with_fines):,} facilities agree",
         )
-
-        drift = with_fines["fine_total"].sum() - with_fines["file_total"].sum()
         restated = int(
             ((with_fines["fine_total"] - with_fines["file_total"]).abs() >= 1.0).sum()
         )
         c.note(
             "restatement drift",
             f"the warehouse holds CMS's latest figures, so it differs from this "
-            f"snapshot by ${drift:,.0f} across {restated:,} facilities — expected, "
-            f"not a fault",
+            f"snapshot by "
+            f"${with_fines['fine_total'].sum() - with_fines['file_total'].sum():,.0f} "
+            f"across {restated:,} facilities — expected, not a fault",
         )
         if not money_match.all():
             bad = with_fines[~money_match].head(5)
-            print(bad[["ccn", "fine_total", "cms_fine_total"]].to_string(index=False))
+            print(bad[["ccn", "file_total", "cms_fine_total"]].to_string(index=False))
 
     print("\n5. Fact_Penalty_Event — deduplication (rule Q2)")
     n_events, n_pen_ccn = con.execute(
@@ -273,12 +296,10 @@ def main() -> int:
     # Storing more than that means deduplication let a repeat through.
     quiet = RunLog()
     quiet.add = lambda **kwargs: None
-    # Keyed on the identity — facility, date, type — and deliberately not on the
-    # amount. CMS restates amounts, so two genuinely separate penalties on one
-    # day can end up stored at the same figure, and an amount-keyed bound reads
-    # that as a duplicate. Dropping the amount also makes the bound stricter: it
-    # now counts every penalty a facility took that day, not every distinctly
-    # priced one.
+    # Keyed on the identity — facility, date, type — not the amount. CMS
+    # restates amounts, so two separate penalties on one day can end up stored
+    # at the same figure and an amount-keyed bound reads that as a duplicate.
+    # Dropping it also makes the bound stricter.
     KEY = ["ccn", "pdate", "ptype"]
     per_file = []
     for snap in fetch.local_snapshot_dates():
@@ -395,6 +416,53 @@ def main() -> int:
         f"SUM/SUM = {row[0]:.2%} vs AVG of ratios = {row[1]:.2%} "
         f"(a {abs(row[0] - row[1]) * 100:.1f} point gap — this is why ratios are not stored)",
     )
+
+    print("\n8. Every extracted source file was actually read")
+    # The check that would have caught the republished-period bug. A file that
+    # was downloaded and unpacked but never read costs nothing at run time and
+    # produces no error — the warehouse is simply smaller, and every other check
+    # still passes on the rows that did make it. Dedup collapsing from 38% to 0%
+    # was the visible symptom, and nobody was watching it.
+    cov = con.execute(
+        """
+        SELECT rows_affected, detail FROM etl_run_log
+        WHERE run_id = (SELECT MAX(run_id) FROM etl_run_log)
+          AND rule = 'coverage' AND target = 'penalties'
+        ORDER BY logged_at DESC LIMIT 1
+        """
+    ).fetchone()
+    if cov is None:
+        c.check("the ETL recorded source-file coverage", False,
+                "no coverage row in the run log — re-run run_facts.py")
+    else:
+        unread, detail = int(cov[0]), cov[1]
+        c.check("no extracted Penalties file went unread", unread == 0, detail)
+
+    dedup = con.execute(
+        """
+        SELECT detail FROM etl_run_log
+        WHERE run_id = (SELECT MAX(run_id) FROM etl_run_log)
+          AND rule = 'Q2' AND target = 'Fact_Penalty_Event'
+          AND detail LIKE '%rolling window%'
+        LIMIT 1
+        """
+    ).fetchone()
+    if dedup:
+        pct = re.search(r"\(([\d.]+)% were the rolling window", dedup[0])
+        if pct:
+            share = float(pct.group(1))
+            # The Penalties file is a rolling 3-year window. Two or more periods
+            # inside that window must therefore repeat penalties. A 0% overlap
+            # with several periods loaded means a file was dropped, not that CMS
+            # stopped repeating itself.
+            periods = con.execute(
+                "SELECT COUNT(DISTINCT snapshot_date_key) FROM Fact_Facility_Monthly"
+            ).fetchone()[0]
+            if periods > 1:
+                c.check("deduplication removed something, as overlapping windows require",
+                        share > 0, f"{share}% of raw rows were repeats across {periods} periods")
+            else:
+                c.note("only one period loaded, so no window overlap is expected", dedup[0])
 
     con.close()
     print("\n" + "=" * 62)
