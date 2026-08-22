@@ -65,6 +65,7 @@ def main() -> None:
          "bq4_controlled_occupancy")
 
     # BQ5 — trend
+    save(charts.trend_lines(queries.bq5_period_trend(con)), "bq5_trend")
     pairs, context = queries.bq5_matched_cohort(con)
     save(charts.matched_cohort_slopes(context), "bq5_cohort_slopes")
     save(charts.rating_migration(pairs, context), "bq5_rating_migration")

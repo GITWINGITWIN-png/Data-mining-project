@@ -341,26 +341,73 @@ def _market(con, f) -> Insight | None:
     loose = df.nsmallest(3, "m1_occupancy_rate")
     has_pop = df["m10_beds_per_1000_elderly"].notna().any()
 
+    ranking = (
+        "ตลาดที่ตึงที่สุด (เข้าพักสูง คู่แข่งเต็ม): "
+        + " · ".join(f"**{r.state_code}** {r.m1_occupancy_rate:.1%} (ดาว {r.m7_avg_overall_rating:.2f})"
+                     for r in tight.itertuples())
+        + "\n\nตลาดที่หลวมที่สุด: "
+        + " · ".join(f"**{r.state_code}** {r.m1_occupancy_rate:.1%} (ดาว {r.m7_avg_overall_rating:.2f})"
+                     for r in loose.itertuples())
+    )
+
+    if not has_pop:
+        # Kept as a live branch, not dead code: a warehouse built without
+        # Ref_State_Population still renders, and says so instead of pretending.
+        return Insight(
+            bq="BQ1",
+            title="จัดอันดับตลาดรายรัฐได้แล้วครึ่งเดียว — ยังขาดข้อมูลประชากร",
+            finding=(
+                ranking
+                + "\n\nแต่ **M10 เตียงต่อผู้สูงอายุพันคน ยังคำนวณไม่ได้** เพราะยังไม่ได้โหลด "
+                  "`Ref_State_Population` อัตราการเข้าพักต่ำอาจแปลว่าตลาดยังมีที่ว่าง "
+                  "หรือแปลว่าอุปสงค์ในรัฐนั้นน้อยจริง — แยกสองอย่างนี้ไม่ได้ถ้าไม่มีตัวหาร"
+            ),
+            recommendation=(
+                "รัน `02_ETL/population.py` ก่อน (ไม่ต้องมี API key — มีแฟ้มสำรองให้อยู่แล้ว) "
+                "แล้วหน้านี้จะจัดอันดับตลาดได้ครบ"
+            ),
+            evidence=f"{len(df)} รัฐที่มีอย่างน้อย 20 แห่ง · ไม่มีข้อมูลประชากร",
+            strength="blocked",
+            caveats=["M10 คืนค่า NULL ทุกแถวจนกว่าจะโหลด Ref_State_Population"],
+        )
+
+    # Supply against demand: a loose market with few beds per elderly person is
+    # genuinely underserved, while a loose market that is already well supplied
+    # is simply short of demand. Occupancy alone cannot tell those apart, which
+    # is the whole reason M10 exists.
+    with_pop = df[df["m10_beds_per_1000_elderly"].notna()]
+    underserved = with_pop.nsmallest(3, "m10_beds_per_1000_elderly")
+    saturated = with_pop.nlargest(3, "m10_beds_per_1000_elderly")
+    national = (
+        with_pop["total_certified_beds"].sum() / (with_pop["pop_65plus"].sum() / 1000.0)
+        if "total_certified_beds" in with_pop and with_pop["pop_65plus"].sum() else float("nan")
+    )
+
     return Insight(
         bq="BQ1",
-        title="จัดอันดับตลาดรายรัฐได้แล้วครึ่งเดียว — ยังขาดข้อมูลประชากร",
+        title="ตลาดที่ขาดเตียงจริง ๆ ต่างจากตลาดที่แค่เข้าพักต่ำ",
         finding=(
-            f"ตลาดที่ตึงที่สุด (เข้าพักสูง คู่แข่งเต็ม): "
-            + " · ".join(f"**{r.state_code}** {r.m1_occupancy_rate:.1%} (ดาว {r.m7_avg_overall_rating:.2f})"
-                         for r in tight.itertuples())
-            + "\n\nตลาดที่หลวมที่สุด: "
-            + " · ".join(f"**{r.state_code}** {r.m1_occupancy_rate:.1%} (ดาว {r.m7_avg_overall_rating:.2f})"
-                         for r in loose.itertuples())
-            + "\n\nแต่ **M10 เตียงต่อผู้สูงอายุพันคน ยังคำนวณไม่ได้** เพราะ `pop_65plus` ว่างทั้งคอลัมน์ "
-              "อัตราการเข้าพักต่ำอาจแปลว่าตลาดยังมีที่ว่าง หรือแปลว่าอุปสงค์ในรัฐนั้นน้อยจริง "
-              "— แยกสองอย่างนี้ไม่ได้ถ้าไม่มีตัวหารเป็นจำนวนประชากรสูงอายุ"
+            ranking
+            + f"\n\n**M10 เตียงต่อผู้สูงอายุ 1,000 คน** (ค่าเฉลี่ยทั้งประเทศ {national:.1f}) "
+            + "เตียงน้อยที่สุดเทียบประชากรสูงอายุ: "
+            + " · ".join(f"**{r.state_code}** {r.m10_beds_per_1000_elderly:.1f}"
+                         for r in underserved.itertuples())
+            + " · หนาแน่นที่สุด: "
+            + " · ".join(f"**{r.state_code}** {r.m10_beds_per_1000_elderly:.1f}"
+                         for r in saturated.itertuples())
         ),
         recommendation=(
-            "ยังไม่ควรตัดสินใจเลือกรัฐที่จะลงทุนจากหน้านี้ ให้เติม `pop_65plus` จาก Census ACS ก่อน "
-            "ถ้าเติมไม่ทัน ทางถอยตามเอกสารออกแบบคือตัด BQ1 ทิ้งแล้วเหลือคำถามอีก 7 ข้อ ซึ่งยังเกินเกณฑ์"
+            "รัฐที่น่าลงทุนคือรัฐที่ **เข้าพักสูงและ M10 ต่ำ** พร้อมกัน — อุปสงค์เต็มอยู่แล้ว "
+            "และยังมีเตียงต่อประชากรน้อยกว่าค่าเฉลี่ย ส่วนรัฐที่เข้าพักต่ำแต่ M10 สูง "
+            "คือตลาดที่เตียงล้นแล้ว การเพิ่มเตียงจะยิ่งกดอัตราการเข้าพักลง"
         ),
-        evidence=f"{len(df)} รัฐที่มีอย่างน้อย 20 แห่ง"
-                 + (" · มีข้อมูลประชากรแล้ว" if has_pop else " · ไม่มีข้อมูลประชากร"),
-        strength="solid" if has_pop else "blocked",
-        caveats=[] if has_pop else ["M10 คืนค่า NULL ทุกแถวจนกว่าจะโหลดข้อมูลประชากร"],
+        evidence=(
+            f"{len(with_pop)} รัฐที่มีอย่างน้อย 20 แห่งและมีข้อมูลประชากร "
+            f"· ประชากร 65+ จาก Ref_State_Population"
+        ),
+        strength="solid",
+        caveats=[
+            "ประชากรเป็นค่าประมาณปีล่าสุดที่แหล่งข้อมูลมี ส่วนเตียงเป็นของงวดที่เลือก "
+            "ถ้าสองปีนี้ห่างกันมาก M10 จะเอนไปทางเตียงใหม่กว่าประชากร",
+        ],
     )

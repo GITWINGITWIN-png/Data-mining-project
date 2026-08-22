@@ -178,16 +178,12 @@ def build_dim_geography(frames: list[SnapshotFrame], log: RunLog) -> pd.DataFram
             detail=f"state codes missing from the lookup table: {unknown_states}",
         )
 
-    # Population 65+ is not loaded yet: the Census API needs a key. Left null
-    # rather than filled with a guess.
-    out["pop_65plus"] = pd.NA
-    log.add(
-        step="integrate",
-        rule="Q3",
-        target="Dim_Geography",
-        rows_affected=len(out),
-        detail="pop_65plus entirely null — needs a Census API key or the fallback file (BQ1 blocked)",
-    )
+    # Population 65+ deliberately does not live here. This table is at
+    # (zip_code, city, state_code) grain, so a state population written onto it
+    # is repeated across every ZIP row in that state and any plain SUM
+    # multiplies it by the ZIP count. It lives in Ref_State_Population at its
+    # own (state, year) grain instead; see population.py, and v_market_saturation
+    # for the join.
 
     out = out.sort_values(["state_code", "zip_code", "city"]).reset_index(drop=True)
     out.insert(0, "geography_key", range(1, len(out) + 1))
@@ -195,7 +191,6 @@ def build_dim_geography(frames: list[SnapshotFrame], log: RunLog) -> pd.DataFram
     cols = [
         "geography_key", "zip_code", "city", "county_parish", "state_code",
         "state_name", "census_region", "urban_rural", "latitude", "longitude",
-        "pop_65plus",
     ]
     out = _prepend_unknown(out[cols], "geography_key", {
         "zip_code": UNKNOWN_LABEL, "city": UNKNOWN_LABEL,

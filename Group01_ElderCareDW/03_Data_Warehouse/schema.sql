@@ -82,11 +82,12 @@ CREATE TABLE Dim_Facility (
 -- ---------------------------------------------------------------------
 --  Dim_Geography — SCD type 1, grain (zip_code, city, state_code).
 --
---  pop_65plus sits at this grain, which means a state's population is
---  repeated across every ZIP row in that state. SUM(pop_65plus) over the
---  dimension is therefore meaningless. Nothing in SQL can prevent that
---  addition; see views.sql, which does the aggregation once, correctly,
---  so the dashboard never has to.
+--  Population aged 65+ deliberately does not live here. At this grain a
+--  state's population would repeat across every ZIP row in that state, and
+--  no constraint in SQL can stop someone summing it: the fan trap is
+--  created by storing the column, not by the query that hits it. It lives
+--  in Ref_State_Population at its own (state, year) grain instead, and
+--  v_market_saturation joins the two on state.
 -- ---------------------------------------------------------------------
 CREATE TABLE Dim_Geography (
     geography_key  BIGINT   NOT NULL,
@@ -99,7 +100,6 @@ CREATE TABLE Dim_Geography (
     urban_rural    VARCHAR,
     latitude       DOUBLE,
     longitude      DOUBLE,
-    pop_65plus     INTEGER,
 
     PRIMARY KEY (geography_key),
     UNIQUE (zip_code, city, state_code),
@@ -152,6 +152,32 @@ CREATE TABLE Dim_Penalty_Type (
 
     PRIMARY KEY (penalty_type_key),
     UNIQUE (penalty_type)
+);
+
+
+-- ---------------------------------------------------------------------
+--  Ref_State_Population — the one non-CMS source, grain (state_code, year).
+--
+--  Not a dimension: no fact has a foreign key to it, and nothing joins to it
+--  by surrogate key. It is a reference table that v_market_saturation joins on
+--  state_code to turn "how many beds" into "how many beds per elderly person",
+--  which is the demand side of BQ1. CMS only ever describes providers.
+--
+--  Its own grain is what keeps it honest. Written onto Dim_Geography it would
+--  repeat down every ZIP row in the state; here one state-year is one row, and
+--  SUM(pop_65plus) over a year means exactly what it says.
+-- ---------------------------------------------------------------------
+CREATE TABLE Ref_State_Population (
+    state_code   VARCHAR  NOT NULL,
+    state_name   VARCHAR,
+    year         INTEGER  NOT NULL,
+    pop_65plus   BIGINT   NOT NULL,
+    source       VARCHAR  NOT NULL,
+
+    PRIMARY KEY (state_code, year),
+    -- A population of zero means the parse dropped the age bands rather than
+    -- that nobody lives there; negative is impossible either way.
+    CONSTRAINT ref_state_population_positive CHECK (pop_65plus > 0)
 );
 
 

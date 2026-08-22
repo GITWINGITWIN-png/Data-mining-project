@@ -58,10 +58,17 @@ def list_snapshots(theme_only: bool = True) -> list[Snapshot]:
         kind = row.get("type", "")
         if theme_only and kind != "theme":
             continue
+        # Endpoint A hands back an absolute URL. The `/relative` variant this
+        # once called returned a site-root path instead, which is where the
+        # unconditional `CMS_BASE +` came from — left in place it builds
+        # "https://data.cms.govhttps://data.cms.gov/..." and urllib reports it
+        # as "Name or service not known", which reads like a DNS outage rather
+        # than a malformed URL. Accept either shape.
+        href = row["url"]
         snapshots.append(
             Snapshot(
                 date=row["date"],
-                url=config.CMS_BASE + row["url"],
+                url=href if href.startswith("http") else config.CMS_BASE + href,
                 size_bytes=int(row.get("size") or 0),
                 kind=kind,
             )
@@ -114,6 +121,16 @@ def classify(filename: str) -> str | None:
     rather than a glob or positional string slicing.
     """
     base = filename.rsplit("/", 1)[-1]
+
+    # Some CMS archives were zipped on a Mac and carry an AppleDouble sidecar
+    # beside every real file: `._4pq5-n9py_..._NH_ProviderInfo_Jul2026.csv`,
+    # 212 bytes of binary metadata. It matches the same pattern as the file it
+    # shadows, sorts first, and pandas reads it as a single column named
+    # "unnamed: 0" — which surfaces much later as "unrecognised column layout"
+    # and looks like CMS changed the format again. Skip the sidecars.
+    if base.startswith("._") or filename.startswith("__MACOSX/"):
+        return None
+
     for logical, pattern in config.FILE_PATTERNS.items():
         if re.search(pattern, base, flags=re.IGNORECASE):
             return logical

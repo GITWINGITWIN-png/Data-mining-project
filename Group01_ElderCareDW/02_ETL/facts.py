@@ -120,13 +120,21 @@ def _ownership_key(df: pd.DataFrame, dim_ownership: pd.DataFrame) -> pd.Series:
     )
 
 
-def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame, era_has_chain: bool) -> pd.Series:
-    """Blank chain means Independent, but only when the era actually has the column.
+def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame) -> pd.Series:
+    """Blank chain means Independent, but only when the file carries the column.
 
-    In the 2019 era there is no chain column at all, so every row points at
-    Unknown: not knowing is not the same as knowing there is no chain.
+    Where there is no chain column at all, every row points at Unknown: not
+    knowing is not the same as knowing there is no chain.
+
+    Whether the column exists is read from the frame, not from the era's name.
+    This used to test `era != "2019"`, which was true of every era that existed
+    when it was written. It is wrong twice over: the 2020 era has no chain
+    column, and neither do the 2026-era files before 2025-07 — CMS only added
+    `Chain Name` in that release, so 26 of the 32 periods have nothing to read.
+    The old test made all of them assert "in no chain" on no evidence. Same test
+    as dimensions.build_dim_chain, so the two cannot disagree.
     """
-    if not era_has_chain:
+    if "chain_name" not in df.columns or df["chain_name"].isna().all():
         return pd.Series(UNKNOWN_KEY, index=df.index, dtype="int64")
 
     mapping = dict(zip(dim_chain["chain_name"], dim_chain["chain_key"]))
@@ -134,6 +142,43 @@ def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame, era_has_chain: bool) -
     keys = names.map(mapping)
     keys = keys.where(names.notna(), INDEPENDENT_CHAIN_KEY)   # blank -> Independent
     return keys.fillna(UNKNOWN_KEY).astype("int64")
+
+
+def _denial_days(pen: pd.DataFrame, frame: SnapshotFrame, log: RunLog) -> pd.Series:
+    """Payment denial length, with negative durations blanked rather than stored.
+
+    Rule Q4 flags implausible values and keeps them, because an occupancy of
+    105% is surprising but could be true. A negative duration is a different
+    thing: it is not unlikely, it is not a duration at all, and no reading of
+    the source makes it one. So the row survives — the penalty really was
+    imposed — but the length becomes NULL, which says "not known" instead of
+    asserting a number that cannot be right.
+
+    One row in the full 2019-2026 set trips this: CCN 056056, penalty dated
+    2018-12-31, reported as -526 days. schema.sql refuses to store it, and it
+    should; this is where it stops being stored.
+    """
+    days = clean.to_number(pen["payment_denial_days"])
+    negative = days < 0
+    n_negative = int(negative.sum())
+    if n_negative:
+        log.add(
+            step="clean",
+            # Not Q4: Q4 flags and keeps, this blanks. Logged under its own rule
+            # name so a reader counting Q4 flags does not find a row that was
+            # handled by the opposite policy.
+            rule="impossible_value",
+            snapshot_date=frame.snapshot_date,
+            target="Fact_Penalty_Event",
+            rows_affected=n_negative,
+            detail=(
+                f"{n_negative} payment denial(s) reported a negative length "
+                f"(min {int(days[negative].min())} days) — the event is kept, the "
+                f"length set to NULL because a negative duration is not a duration"
+            ),
+        )
+        days = days.mask(negative)
+    return days
 
 
 def _date_key(dates: pd.Series) -> pd.Series:
@@ -191,7 +236,7 @@ def build_fact_facility_monthly(
             ),
             "geography_key": _geography_key(df, dims["Dim_Geography"]),
             "ownership_key": _ownership_key(df, dims["Dim_Ownership"]),
-            "chain_key": _chain_key(df, dims["Dim_Chain"], frame.era != "2019"),
+            "chain_key": _chain_key(df, dims["Dim_Chain"]),
             "ccn": df["ccn"],
             "certified_beds": beds,
             "avg_residents_per_day": residents,
@@ -322,7 +367,7 @@ def build_fact_penalty_event(
     reported again in up to 36 periods. Deduplication is therefore the whole
     job of this function, and it uses **one** identity for every era (rule Q2):
 
-        ccn | penalty_date | penalty_type | fine_amount | occurrence
+        ccn | penalty_date | penalty_type | occurrence
 
     `occurrence` is the row's position inside its own identical group, which is
     what keeps genuinely distinct penalties apart: one facility can be fined
@@ -351,15 +396,18 @@ def build_fact_penalty_event(
             "penalty_type": clean.normalize_text(pen["penalty_type"]),
             "fine_id": clean.normalize_text(pen["fine_id"]) if "fine_id" in pen else pd.NA,
             "fine_amount_usd": clean.to_number(pen["fine_amount_usd"]),
-            "payment_denial_days": clean.to_number(pen["payment_denial_days"]),
+            "payment_denial_days": _denial_days(pen, frame, log),
             "_snapshot": frame.snapshot_date,
             "_stamp": frame.processing_date,
             "_era": frame.era,
         })
-        # Occurrence number inside an identical group, so same-day same-amount
+        # Occurrence number inside an identical group, so two separate
         # penalties stay distinct rows instead of collapsing into one
+        # The amount is deliberately not in this grouping, and must stay out to
+        # match `_natural_key`. CMS revises amounts after publication, so
+        # grouping on one makes every revision look like a new penalty.
         df["_occurrence"] = df.groupby(
-            ["ccn", "penalty_date", "penalty_type", "fine_amount_usd"], dropna=False
+            ["ccn", "penalty_date", "penalty_type"], dropna=False
         ).cumcount()
         pieces.append(df)
 
@@ -390,10 +438,55 @@ def build_fact_penalty_event(
         allrows["fine_id"].notna().map({True: "fine_id", False: "natural_key"})
     )
 
-    # Keep the first sighting of each event: contemporaneous attributes, and the
-    # earliest period is the one whose window the penalty actually fell in
+    # Identity, in priority order: CMS's own Fine ID where it exists, the
+    # natural key where it does not.
+    #
+    # The natural key alone is not enough once two Fine-ID-bearing periods
+    # overlap. Their windows both cover 2023-2026, so the same fine is reported
+    # twice — and where CMS revised the amount or the date between publications,
+    # the natural key differs on the two sightings and stores one penalty as
+    # two. Measured on Jun+Jul 2026: 493 Fine IDs spread across more than one
+    # key, inflating 444 facilities by $18.5M against CMS's own column.
+    #
+    # This is the hybrid the docstring above used to reject, and it is safe now
+    # only because the backfill ran first. The old objection was that an event
+    # seen both before and after the 202606 release would get two identities —
+    # a natural key in the early period and a Fine ID in the late one. Backfill
+    # removes that: the early sighting has already inherited the Fine ID of its
+    # own natural-key group, so both sightings resolve to the same identity.
+    # Without that step this would double-store instead of deduplicate.
+    allrows["_identity"] = allrows["fine_id"].where(
+        allrows["fine_id"].notna(), allrows["_dedup_key"]
+    )
+
+    # Keep the LAST sighting of each event.
+    #
+    # This was `first` while the warehouse held four periods, on the reasoning
+    # that the earliest sighting carries the amount CMS's own per-facility total
+    # was computed from. Over 32 periods that reasoning inverts: the earliest
+    # sighting of a 2016 penalty comes from a 2019 file, and CMS has restated
+    # thousands of amounts since. Reconciled against the Jun 2026 column,
+    # `first` agrees for 1,760 of 6,563 facilities and `last` for 6,119 — the
+    # published column reports current amounts, so the current sighting is the
+    # one that matches it, and it is also what the facility's own CMS page
+    # shows. The 444 that still differ are fines CMS restated between the Jun
+    # and Jul 2026 releases, which no Jun-dated column can know about.
     allrows = allrows.sort_values(["_stamp", "ccn", "penalty_date"])
-    deduped = allrows.drop_duplicates(subset="_dedup_key", keep="first").copy()
+    deduped = allrows.drop_duplicates(subset="_identity", keep="last").copy()
+
+    by_natural_key_only = allrows["_dedup_key"].nunique()
+    if by_natural_key_only != len(deduped):
+        log.add(
+            step="clean",
+            rule="Q2",
+            target="Fact_Penalty_Event",
+            rows_affected=by_natural_key_only - len(deduped),
+            detail=(
+                f"Fine ID collapsed {by_natural_key_only - len(deduped):,} event(s) that the "
+                f"natural key had split — the same fine reported with a revised amount or "
+                f"date by a later period"
+            ),
+        )
 
     if backfilled:
         log.add(
@@ -487,11 +580,8 @@ def _natural_key(rows: pd.DataFrame) -> pd.Series:
     ccn = rows["ccn"].astype("string").fillna("?")
     date = rows["penalty_date"].dt.strftime("%Y-%m-%d").astype("string").fillna("?")
     ptype = rows["penalty_type"].astype("string").fillna("?")
-    amount = rows["fine_amount_usd"].map(
-        lambda v: "-" if pd.isna(v) else f"{v:.2f}"
-    ).astype("string")
     occurrence = rows["_occurrence"].astype("string")
-    return ccn + "|" + date + "|" + ptype + "|" + amount + "|" + occurrence
+    return ccn + "|" + date + "|" + ptype + "|" + occurrence
 
 
 def _audit_key_against_fine_id(rows: pd.DataFrame, log: RunLog) -> None:
@@ -584,7 +674,7 @@ def _penalty_attributes(
             "_snapshot": frame.snapshot_date,
             "geography_key": _geography_key(df, dims["Dim_Geography"]),
             "ownership_key": _ownership_key(df, dims["Dim_Ownership"]),
-            "chain_key": _chain_key(df, dims["Dim_Chain"], frame.era != "2019"),
+            "chain_key": _chain_key(df, dims["Dim_Chain"]),
         }))
     attrs = pd.concat(rows, ignore_index=True)
     return attrs.drop_duplicates(subset=["ccn", "_snapshot"], keep="first")

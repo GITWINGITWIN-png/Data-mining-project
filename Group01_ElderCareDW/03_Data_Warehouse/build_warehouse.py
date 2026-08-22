@@ -10,10 +10,12 @@ data and discards every guarantee about it. `schema.sql` is where the grain,
 the keys and the value ranges are written down; this script is what makes
 DuckDB enforce them.
 
-How it works: each table is renamed aside, the declared table is created empty,
-and the rows are inserted back through the constraints. A row that violates one
-aborts the run and the original table is restored, so a failed run leaves the
-warehouse exactly as it was rather than half converted.
+How it works: a fresh database file is built beside the existing one, the
+declared tables are created in it, and every row is inserted through the
+constraints from the ETL output. Only once that succeeds is the new file swapped
+into place, atomically. A row that violates a constraint aborts the run and the
+temporary file is deleted, so the warehouse is never left half converted — the
+original is not even opened for writing until the swap.
 
 That makes the insert a real test. `load.validate()` in the ETL checks the same
 keys in pandas, but it checks the frames it built in memory; this checks what is
@@ -46,11 +48,77 @@ TABLE_ORDER = [
     "Dim_Ownership",
     "Dim_Chain",
     "Dim_Penalty_Type",
+    # Not a dimension and not pointed at by any foreign key, but it is declared
+    # in schema.sql and carries its own constraints, so it is built the same way
+    # everything else is rather than copied across unchecked.
+    "Ref_State_Population",
     "Fact_Facility_Monthly",
     "Fact_Penalty_Event",
 ]
 
 STAGE_SUFFIX = "_stage"
+
+
+def build_into_new_file(source: Path, target: Path) -> list[tuple[str, int]]:
+    """Create a fully constrained warehouse in a new file from `source`.
+
+    Built fresh rather than converted in place. The in-place version dropped the
+    tables and recreated them through schema.sql, which fails: DuckDB keeps a
+    foreign key's reverse dependency alive across the drop sequence, so dropping
+    a dimension is refused because a fact that was *already dropped* still
+    claims it. Worse, the failure left the database half converted — staging
+    copies present, fact tables gone — and the restore path hit the same catalog
+    error trying to clean up.
+
+    Building beside the original and swapping at the end removes the whole
+    problem. Nothing is dropped, ordering cannot deadlock, and a failure leaves
+    the original file untouched because it was never opened for writing.
+    """
+    if target.exists():
+        target.unlink()
+
+    con = duckdb.connect(str(target))
+    try:
+        con.execute(f"ATTACH '{source}' AS src (READ_ONLY)")
+
+        missing = [
+            t for t in TABLE_ORDER
+            if not con.execute(
+                "SELECT COUNT(*) FROM duckdb_tables() "
+                "WHERE database_name = 'src' AND table_name = ?", [t]
+            ).fetchone()[0]
+        ]
+        if missing:
+            raise SystemExit(
+                f"! these tables are not in the database yet: {missing}\n"
+                f"  run 02_ETL/run_dims.py then 02_ETL/run_facts.py first"
+            )
+
+        con.execute(SCHEMA_SQL.read_text(encoding="utf-8"))
+
+        results = []
+        for name in TABLE_ORDER:
+            cols = ", ".join(f'"{c}"' for c in _columns(con, name))
+            # Columns named explicitly: if the ETL adds one and schema.sql has
+            # not caught up, this fails naming the column rather than silently
+            # shifting every value one position along.
+            con.execute(f'INSERT INTO "{name}" ({cols}) SELECT {cols} FROM src."{name}"')
+            rows = con.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+            results.append((name, rows))
+
+        # The run log carries no constraints and is not part of the star; copy
+        # it across so the warehouse keeps its own audit trail.
+        if con.execute(
+            "SELECT COUNT(*) FROM duckdb_tables() "
+            "WHERE database_name = 'src' AND table_name = 'etl_run_log'"
+        ).fetchone()[0]:
+            con.execute("CREATE TABLE etl_run_log AS SELECT * FROM src.etl_run_log")
+
+        con.execute("DETACH src")
+        con.execute(VIEWS_SQL.read_text(encoding="utf-8"))
+        return results
+    finally:
+        con.close()
 
 
 def _tables(con) -> set[str]:
@@ -70,80 +138,6 @@ def _columns(con, table: str) -> list[str]:
     return [r[0] for r in con.execute(f'DESCRIBE "{table}"').fetchall()]
 
 
-def drop_views(con) -> list[str]:
-    """Views must go before the tables they read, or the rename is refused."""
-    dropped = _views(con)
-    for name in dropped:
-        con.execute(f'DROP VIEW IF EXISTS "{name}"')
-    return dropped
-
-
-def clear_stages(con) -> None:
-    """Remove leftovers from a run that died midway, so a retry starts clean."""
-    for name in _tables(con):
-        if name.endswith(STAGE_SUFFIX):
-            con.execute(f'DROP TABLE IF EXISTS "{name}"')
-
-
-def harden(con) -> list[tuple[str, int]]:
-    """Rebuild every table through schema.sql. Returns [(table, rows)]."""
-    present = _tables(con)
-    missing = [t for t in TABLE_ORDER if t not in present]
-    if missing:
-        raise SystemExit(
-            f"! these tables are not in the database yet: {missing}\n"
-            f"  run 02_ETL/run_dims.py then 02_ETL/run_facts.py first"
-        )
-
-    # Copy aside, then drop — not rename. On the second run the tables already
-    # carry the foreign keys this script added, and renaming a fact does not
-    # release its grip on the dimensions it points at: DuckDB then refuses to
-    # touch Dim_Penalty_Type because a renamed table still depends on it. The
-    # copies are made with plain CREATE TABLE AS, which carries no constraints
-    # and therefore no dependencies, so the originals can be dropped outright.
-    for name in TABLE_ORDER:
-        con.execute(f'CREATE TABLE "{name}{STAGE_SUFFIX}" AS SELECT * FROM "{name}"')
-    for name in reversed(TABLE_ORDER):
-        con.execute(f'DROP TABLE "{name}"')
-
-    con.execute(SCHEMA_SQL.read_text(encoding="utf-8"))
-
-    results = []
-    for name in TABLE_ORDER:
-        cols = ", ".join(f'"{c}"' for c in _columns(con, name))
-        # Columns are named explicitly rather than SELECT *: if the ETL adds a
-        # column and schema.sql has not been updated, this fails with the name
-        # of the column instead of silently shifting every value one position.
-        con.execute(f'INSERT INTO "{name}" ({cols}) SELECT {cols} FROM "{name}{STAGE_SUFFIX}"')
-        rows = con.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
-        results.append((name, rows))
-
-    for name in TABLE_ORDER:
-        con.execute(f'DROP TABLE "{name}{STAGE_SUFFIX}"')
-
-    return results
-
-
-def restore(con) -> None:
-    """Put the staged copies back after a failed harden.
-
-    Whatever schema.sql managed to create is dropped children-first, then the
-    unconstrained copies are renamed into place. The warehouse comes back
-    exactly as the ETL left it, which is the state the fix will be re-run from.
-    """
-    present = _tables(con)
-    staged = [n for n in TABLE_ORDER if f"{n}{STAGE_SUFFIX}" in present]
-    if not staged:
-        return
-    for name in reversed(TABLE_ORDER):
-        con.execute(f'DROP TABLE IF EXISTS "{name}"')
-    for name in staged:
-        con.execute(f'ALTER TABLE "{name}{STAGE_SUFFIX}" RENAME TO "{name}"')
-
-
-def build_views(con) -> list[str]:
-    con.execute(VIEWS_SQL.read_text(encoding="utf-8"))
-    return sorted(_views(con))
 
 
 def report(con) -> None:
@@ -164,14 +158,16 @@ def report(con) -> None:
               f"   gap {gap:+.2f} pts")
 
     print("\nM10 / BQ1 readiness")
-    filled = con.execute(
-        "SELECT COUNT(*) FROM Dim_Geography WHERE pop_65plus IS NOT NULL"
-    ).fetchone()[0]
-    if filled:
-        print(f"  pop_65plus populated on {filled:,} rows — BQ1 can be answered")
+    answered, total, year = con.execute(
+        "SELECT COUNT(m10_beds_per_1000_elderly), COUNT(*), MAX(population_year) "
+        "FROM v_market_saturation"
+    ).fetchone()
+    if answered:
+        print(f"  M10 resolves for {answered:,} of {total:,} states "
+              f"on {year} population — BQ1 can be answered")
     else:
-        print("  pop_65plus is empty — v_market_saturation returns NULL for M10, "
-              "and BQ1 stays blocked until the Census load exists")
+        print("  M10 is NULL for every state — run 02_ETL/population.py, which "
+              "falls back to a static file when there is no Census API key")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -187,49 +183,62 @@ def main(argv: list[str] | None = None) -> int:
         print(f"! no database at {DB_PATH}\n  run 02_ETL/run_dims.py then run_facts.py first")
         return 1
 
+    # Clear staging copies left behind by the old in-place implementation, so a
+    # database stranded by it can still be rebuilt.
     con = duckdb.connect(str(DB_PATH))
     try:
-        print("Dropping views so the tables underneath can be replaced")
-        dropped = drop_views(con)
-        print(f"  dropped {len(dropped)} view(s)")
-
-        clear_stages(con)
-
-        print("\nApplying schema.sql — every row re-inserted through the constraints")
-        try:
-            results = harden(con)
-        except duckdb.ConstraintException as exc:
-            restore(con)
-            print("\n! a constraint rejected the data — nothing was changed")
-            print(f"  {exc}")
-            print("\n  This is the schema doing its job: the warehouse is refusing to store")
-            print("  something the design document says cannot happen. Fix the ETL rule the")
-            print("  message names, re-run run_dims.py and run_facts.py, then try again.")
-            return 2
-        except duckdb.Error as exc:
-            restore(con)
-            print("\n! the rebuild failed — nothing was changed")
-            print(f"  {type(exc).__name__}: {exc}")
-            print("\n  This is not a data problem. Something is wrong with schema.sql itself")
-            print("  or with the state of the database file.")
-            return 3
-
-        for name, rows in results:
-            print(f"  {name:<24} {rows:>9,} rows")
-
-        print("\nApplying views.sql")
-        views = build_views(con)
-        for name in views:
-            print(f"  {name}")
-
-        if args.report:
-            report(con)
-
-        print(f"\nWarehouse ready: {DB_PATH}")
-        print("Query the views, not the fact tables — measures are defined once, in views.sql")
-        return 0
+        leftovers = [t for t in _tables(con) if t.endswith(STAGE_SUFFIX)]
+        for name in leftovers:
+            con.execute(f'DROP TABLE IF EXISTS "{name}"')
+        if leftovers:
+            print(f"Cleared {len(leftovers)} staging table(s) from an earlier failed run")
     finally:
         con.close()
+
+    tmp = DB_PATH.with_suffix(".duckdb.building")
+    print("\nBuilding a fresh warehouse — every row inserted through the constraints")
+    try:
+        results = build_into_new_file(DB_PATH, tmp)
+    except duckdb.ConstraintException as exc:
+        tmp.unlink(missing_ok=True)
+        print("\n! a constraint rejected the data — the warehouse is unchanged")
+        print(f"  {exc}")
+        print("\n  This is the schema doing its job: it is refusing to store something the")
+        print("  design document says cannot happen. Fix the ETL rule the message names,")
+        print("  re-run run_dims.py and run_facts.py, then try again.")
+        return 2
+    except duckdb.Error as exc:
+        tmp.unlink(missing_ok=True)
+        print("\n! the rebuild failed — the warehouse is unchanged")
+        print(f"  {type(exc).__name__}: {exc}")
+        print("\n  This is not a data problem. Something is wrong with schema.sql itself")
+        print("  or with the state of the database file.")
+        return 3
+    except SystemExit:
+        tmp.unlink(missing_ok=True)
+        raise
+
+    for name, rows in results:
+        print(f"  {name:<24} {rows:>9,} rows")
+
+    # Swap only once the new file is complete and closed. os.replace is atomic
+    # on the same filesystem, so there is no instant at which the warehouse is
+    # missing or half written.
+    tmp.replace(DB_PATH)
+
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+    try:
+        print("\nViews")
+        for name in sorted(_views(con)):
+            print(f"  {name}")
+        if args.report:
+            report(con)
+    finally:
+        con.close()
+
+    print(f"\nWarehouse ready: {DB_PATH}")
+    print("Query the views, not the fact tables — measures are defined once, in views.sql")
+    return 0
 
 
 if __name__ == "__main__":
