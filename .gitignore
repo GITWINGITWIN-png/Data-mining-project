@@ -12,6 +12,7 @@ Group01_ElderCareDW/02_ETL/_logs/
 
 # ---- ผลลัพธ์ที่สร้างใหม่ได้ ----
 Group01_ElderCareDW/03_Data_Warehouse/*.duckdb
+Group01_ElderCareDW/03_Data_Warehouse/*.duckdb.wal
 Group01_ElderCareDW/03_Data_Warehouse/*.db
 
 # ---- LaTeX ----

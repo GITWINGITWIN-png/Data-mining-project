@@ -6,8 +6,19 @@
 คลังข้อมูลและแดชบอร์ดสำหรับธุรกิจสถานดูแลผู้สูงอายุ (Skilled Nursing Facility)
 จากข้อมูลเปิดของ CMS สหรัฐอเมริกา ปี 2562–2569
 
-> **สถานะ:** ออกแบบเสร็จแล้ว · ETL ครบทั้ง 6 Dimension และ 2 Fact ตรวจผ่านแล้ว · ยังไม่ทำแดชบอร์ด
-> เอกสารออกแบบฉบับเต็มอยู่ที่ [`06_Report/eldercare_dw_design.pdf`](06_Report/eldercare_dw_design.pdf)
+> **สถานะ:** ตอบครบทั้ง 8 คำถามทางธุรกิจ และแดชบอร์ดใช้งานได้แล้ว · เหลือรายงาน PDF และวิดีโอ
+> · คำตอบทั้งแปดข้อ → [`06_Report/BQ_answers.md`](06_Report/BQ_answers.md)
+> · เอกสารออกแบบฉบับเต็ม → [`06_Report/eldercare_dw_design.pdf`](06_Report/eldercare_dw_design.pdf)
+> · ความคืบหน้าและสิ่งที่เหลือ → [`../PROGRESS.md`](../PROGRESS.md)
+
+## เปิดแดชบอร์ด
+
+```bash
+cd 02_ETL   && python -m pip install -r requirements.txt
+python run_dims.py && python run_facts.py && python population.py   # สร้างคลังข้อมูล
+cd ../04_Dashboard && python -m pip install -r requirements.txt
+streamlit run app.py
+```
 
 ---
 
@@ -17,10 +28,10 @@
 |---|---|---|
 | `01_Raw_Data/` | ข้อมูลดิบจาก CMS (ไม่เก็บใน git — ดู [README](01_Raw_Data/README.md)) | มีคำสั่งโหลดแล้ว |
 | `02_ETL/` | สคริปต์ Extract → Clean → Transform → Integrate → Load ([README](02_ETL/README.md)) | เสร็จ (Dimension + Fact) |
-| `03_Data_Warehouse/` | ไฟล์ฐานข้อมูล DuckDB (สร้างจาก `02_ETL/` ไม่เก็บใน git) | มี 6 Dimension + 2 Fact |
-| `04_Dashboard/` | แอป Streamlit | ว่าง |
-| `05_AI_Usage_Log/` | บันทึกการใช้ Generative AI ([README](05_AI_Usage_Log/README.md)) | เริ่มบันทึกแล้ว |
-| `06_Report/` | เอกสารออกแบบ (LaTeX) และรายงานฉบับส่ง | เอกสารออกแบบเสร็จ |
+| `03_Data_Warehouse/` | สคีมาพร้อมข้อบังคับ + ชั้นความหมาย ([README](03_Data_Warehouse/README.md)) · ไฟล์ DuckDB ไม่เก็บใน git | 8 ตาราง + 10 วิว |
+| `04_Dashboard/` | แอป Streamlit **สองชุด** + โน้ตบุ๊ก + ภาพหน้าจอ ([README](04_Dashboard/README.md)) | ตอบ BQ1–BQ8 ครบทั้งสองชุด |
+| `05_AI_Usage_Log/` | บันทึกการใช้ Generative AI ([README](05_AI_Usage_Log/README.md)) | 15 รายการ (เกณฑ์ขั้นต่ำ 5) |
+| `06_Report/` | เอกสารออกแบบ (LaTeX) · คำตอบ 8 ข้อ · รายงานฉบับส่ง | เอกสารออกแบบ + คำตอบเสร็จ |
 
 ## สรุปโครงงาน
 
@@ -39,6 +50,35 @@ REST API (JSON) · SNF VBP Facility Performance (CSV รายปีงบปร
 
 รายละเอียดทั้งหมด — คำถามทางธุรกิจ 8 ข้อ, measure 10 ตัว, ปัญหาคุณภาพข้อมูล 8 ประเภท,
 การประกาศ Grain และผัง Star Schema — อยู่ในเอกสารออกแบบ
+
+## วิธีรันทั้งโครงงานตั้งแต่ต้น
+
+เริ่มจากโฟลเดอร์เปล่าได้เลย ข้อมูลดิบไม่ได้เก็บใน git แต่โหลดใหม่ได้จาก CMS เสมอ
+
+```bash
+python -m pip install -r requirements.txt      # ติดตั้งครั้งเดียวครบทุกส่วน
+
+cd 02_ETL
+python fetch_snapshots.py --dates 2019-01-17 2026-06-24 2026-07-29 2026-08-06
+python run_dims.py && python run_facts.py      # ต้องรันคู่กันเสมอ
+python verify_dims.py && python verify_facts.py
+
+cd ../03_Data_Warehouse
+python build_warehouse.py --report             # ใส่ข้อบังคับและสร้างวิว
+
+cd ../04_Dashboard
+python verify_dashboard.py                     # ตรวจก่อน (56 ข้อ)
+streamlit run app.py                           # เปิดที่ http://localhost:8501
+```
+
+ขั้นตอนโหลดข้อมูลใช้เวลาสักพักเพราะงวด `2026-07-29` มีขนาด 622 MB
+งวดที่โหลดแล้วจะถูกข้ามในการรันครั้งถัดไป
+
+| ชุดตรวจ | ตรวจอะไร | ผลล่าสุด |
+|---|---|---|
+| `02_ETL/verify_dims.py` | dimension ทั้งหก รวม SCD2 | 22 ผ่าน 0 ตก |
+| `02_ETL/verify_facts.py` | fact ทั้งสอง รวมการกระทบยอดกับตัวเลขที่ CMS คำนวณเอง | 22 ผ่าน 0 ตก |
+| `04_Dashboard/verify_dashboard.py` | measure ตรงกับคลัง และครบตามเกณฑ์โจทย์ | 56 ผ่าน 0 ตก |
 
 ## การสร้างเอกสารรายงานใหม่
 
