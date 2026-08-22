@@ -106,6 +106,42 @@ def write_tables(tables: dict[str, pd.DataFrame], log: RunLog) -> None:
         con.close()
 
 
+def drop_stale_facts(log: RunLog) -> list[str]:
+    """Drop the fact tables after the dimensions have been rebuilt.
+
+    Surrogate keys are assigned by position, so rebuilding the dimensions from a
+    different set of periods renumbers them. Facts written by an earlier run keep
+    the old numbers, and every one of them still resolves — to the wrong facility.
+    Nothing catches it: `_validate_foreign_keys` only sees the tables built in the
+    current run, so a `run_dims.py --dates ...` on its own leaves a warehouse that
+    passes every check and answers every question incorrectly.
+
+    Dropping is the honest option. An empty fact table is an obvious failure that
+    sends you to `run_facts.py`; a silently renumbered one is not.
+    """
+    if not config.DB_PATH.exists():
+        return []
+
+    con = duckdb.connect(str(config.DB_PATH))
+    try:
+        existing = {r[0] for r in con.execute("SHOW TABLES").fetchall()}
+        dropped = [t for t in FACT_TABLES if t in existing]
+        for name in dropped:
+            con.execute(f"DROP TABLE {name}")
+    finally:
+        con.close()
+
+    if dropped:
+        log.add(
+            step="load",
+            rule="drop_stale_facts",
+            target=", ".join(dropped),
+            rows_affected=len(dropped),
+            detail="dimensions were rebuilt, so the surrogate keys the facts held no longer apply",
+        )
+    return dropped
+
+
 def write_run_log(log: RunLog) -> None:
     """Append this run's log to the database.
 

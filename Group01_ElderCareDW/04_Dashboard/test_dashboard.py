@@ -1,4 +1,4 @@
-"""Smoke and interaction tests for the dashboard.
+"""Smoke and interaction tests for the matplotlib dashboard (app_mpl.py).
 
 Run with:  python test_dashboard.py
 
@@ -44,7 +44,7 @@ CASES = [
 def main() -> int:
     failures = 0
     for label, state in CASES:
-        app = AppTest.from_file("app.py", default_timeout=300).run()
+        app = AppTest.from_file("app_mpl.py", default_timeout=300).run()
         for key, value in state.items():
             app.session_state[key] = value
         app.run()

@@ -1,8 +1,13 @@
-# แดชบอร์ด — ติดตั้งด้วย  python -m pip install -r requirements.txt
-# แล้วรันด้วย            streamlit run app.py
+# ติดตั้งด้วย  python -m pip install -r requirements.txt
+# ต้องสร้างคลังข้อมูลให้เสร็จก่อน — ดู README.md
 #
-# ต้องสร้างคลังข้อมูลก่อน:  cd ../02_ETL && python run_dims.py && python run_facts.py
-pandas>=2.2
-duckdb>=1.0
-matplotlib>=3.8
-streamlit>=1.40
+# ขอบบนตั้งไว้ด้วยเหตุผลเดียวกับ 02_ETL/requirements.txt: ปล่อยเปิดไว้แล้ว
+# เครื่องแต่ละคนจะได้เวอร์ชันหลักคนละตัว
+pandas>=2.2,<4
+duckdb>=1.0,<2
+streamlit>=1.49,<2
+
+# โฟลเดอร์นี้มีแดชบอร์ดสองชุดที่ตอบ BQ1–BQ8 เหมือนกัน แต่วาดกราฟคนละไลบรารี
+# ทั้งสองบรรทัดจึงต้องมี จนกว่ากลุ่มจะเลือกว่าจะส่งชุดไหน
+plotly>=5.18,<7        # app.py
+matplotlib>=3.8,<4     # app_mpl.py และ charts.py ที่โน้ตบุ๊กใช้ร่วม

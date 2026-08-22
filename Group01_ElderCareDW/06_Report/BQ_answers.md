@@ -3,9 +3,24 @@
 **โครงงาน** ElderCare Insight — Mini Data Warehouse & Analytics Dashboard · Group 01
 **คำนวณเมื่อ** 22 สิงหาคม 2569 · **งวดหลัก** 2026-07-01 · **หน้าต่างค่าปรับ** 2023-07-01 ถึง 2026-07-01
 
-ทุกตัวเลขในเอกสารนี้เรียกผ่าน `04_Dashboard/queries.py` ซึ่งเป็นโมดูลเดียวกับที่แดชบอร์ด
+ทุกตัวเลขในเอกสารนี้เรียกผ่าน `04_Dashboard/queries_mpl.py` ซึ่งเป็นโมดูลเดียวกับที่แดชบอร์ด
 และโน้ตบุ๊กใช้ ตัวเลขจึงตรงกันทั้งสามที่โดยโครงสร้าง ไม่ใช่โดยบังเอิญ
 คำสั่งที่รันซ้ำได้อยู่ท้ายแต่ละข้อ
+
+> ⚠️ **ข้อมูลค่าปรับยังไม่ครบ — อ่านก่อนใช้ตัวเลขในรายงาน**
+>
+> คลังที่ใช้คำนวณเอกสารนี้**ขาดแฟ้ม Penalties ของงวด `2026-07-29` ไปทั้งแฟ้ม (16,166 แถว)**
+> จากบั๊กใน `02_ETL/sources.py` ที่พบในรายการที่ 011 ของ AI Usage Log
+> ค่าปรับใบล่าสุดในคลังคือ **2026-05-13** ไม่ใช่ 2026-07-01 ตามที่หน้าต่าง 3 ปีระบุ
+>
+> - **BQ1, BQ5, BQ8 ไม่กระทบ** — ไม่ได้ใช้ค่าปรับเป็นตัวตั้ง
+> - **ข้อสรุปของ BQ7 ยังยืน** — แนวโน้ม "ปรับน้อยครั้งแต่หนักขึ้น" วัดจากปี 2566–2568 ซึ่งครบ
+> - **ค่าปรับต่อเตียงทุกตัวเลขต่ำกว่าความจริงเล็กน้อย** (BQ2, BQ3, BQ4, BQ6, BQ7 รายรัฐ)
+>   เพราะหน้าต่าง 3 ปีขาดช่วงท้ายไปราวสองเดือน — แต่การ**เปรียบเทียบระหว่างกลุ่ม**
+>   ยังใช้ได้ เพราะทุกกลุ่มขาดช่วงเดียวกัน
+>
+> เมื่อแก้บั๊กแล้ว ให้รัน `cd 04_Dashboard && python make_figures.py` ใหม่
+> แล้วตรวจตัวเลขในเอกสารนี้ซ้ำก่อนส่ง
 
 ---
 
@@ -58,7 +73,7 @@
 รายรัฐ ไม่ใช่ตัวเลขรวมของประเทศ
 
 ```bash
-python -c "import queries as q; con=q.connect(); f,c=q.bq1_state_market(con); print(q.bq1_opportunity_score(f).head())"
+python -c "import queries_mpl as q; con=q.connect(); f,c=q.bq1_state_market(con); print(q.bq1_opportunity_score(f).head())"
 ```
 
 ---
@@ -89,7 +104,7 @@ python -c "import queries as q; con=q.connect(); f,c=q.bq1_state_market(con); pr
 
 **กับดักที่ปิดไว้** BQ2 ต้องใช้ทั้งสอง Fact ที่ grain ต่างกัน ถ้า `JOIN` ตรง ๆ เตียงของกลุ่ม
 for-profit จะกลายเป็น 2,586,212 แทนที่จะเป็น 1,203,047 — **พองขึ้น 2.1 เท่า**
-`queries.segment_compare()` จึงรวมค่าแต่ละ Fact แยกกันให้เหลือระดับกลุ่มก่อน แล้วค่อยเชื่อม
+`queries_mpl.segment_compare()` จึงรวมค่าแต่ละ Fact แยกกันให้เหลือระดับกลุ่มก่อน แล้วค่อยเชื่อม
 
 ---
 
@@ -155,7 +170,7 @@ CMS นำชั่วโมงพยาบาลไปคิดเป็น **�
 ความชันคงอยู่ในทั้งสามกลุ่ม จึงไม่ใช่ช่องว่างจาก BQ2 ที่มาสวมชื่อใหม่
 
 ```bash
-python -c "import queries as q; con=q.connect(); f,c=q.bq3_staffing_gradient(con); print(f); print(c['below'], c['above'])"
+python -c "import queries_mpl as q; con=q.connect(); f,c=q.bq3_staffing_gradient(con); print(f); print(c['below'], c['above'])"
 ```
 
 ---
@@ -342,7 +357,7 @@ python -c "import queries as q; con=q.connect(); f,c=q.bq3_staffing_gradient(con
 > สถานพยาบาลน้อยกว่า 10 แห่ง ซึ่งตารางรายรัฐตัดออก · ตรวจได้ด้วย:
 >
 > ```bash
-> python -c "import queries as q; con=q.connect(); \
+> python -c "import queries_mpl as q; con=q.connect(); \
 >   print(q.bq7_state_enforcement(con)[1]['total_fines'], q.kpi_summary(con)['fine_total'])"
 > ```
 
@@ -431,8 +446,8 @@ python run_dims.py && python run_facts.py && python population.py
 # 2. เปิดแดชบอร์ด
 cd ../04_Dashboard
 python -m pip install -r requirements.txt
-streamlit run app.py
+streamlit run app_mpl.py
 ```
 
-ทุกตัวเลขในเอกสารนี้มาจาก `queries.py` โดยตรง — เปิดแดชบอร์ดแล้วเลือกงวด 2026-07-01
+ทุกตัวเลขในเอกสารนี้มาจาก `queries_mpl.py` โดยตรง — เปิดแดชบอร์ดแล้วเลือกงวด 2026-07-01
 โดยไม่ตั้งตัวกรองใด ๆ จะได้ตัวเลขชุดเดียวกันทั้งหมด

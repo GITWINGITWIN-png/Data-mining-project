@@ -1,6 +1,6 @@
 """Capture the dashboard screenshots the report needs.
 
-    streamlit run app.py --server.port 8899 &
+    streamlit run app_mpl.py --server.port 8899 &
     python make_screenshots.py
 
 Shots go to `screenshots/`. The assignment requires dashboard images in which

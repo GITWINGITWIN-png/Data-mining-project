@@ -5,8 +5,13 @@
 
 fetch_snapshots.py must have run first; this file never downloads anything, so
 a failure is unambiguously either an extract problem or a transform problem.
+
 Run this before run_facts.py — the facts look their foreign keys up in these
-tables.
+tables, and **this script drops both fact tables on success**. Rebuilding the
+dimensions renumbers the surrogate keys, so facts from an earlier run would keep
+pointing at key values that now mean a different facility. Always the pair:
+
+    python run_dims.py && python run_facts.py
 """
 
 from __future__ import annotations
@@ -61,6 +66,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\nWriting to the database")
     load.write_tables(tables, log)
+    dropped = load.drop_stale_facts(log)
     load.write_run_log(log)
     csv_path = log.save_csv()
 
@@ -70,7 +76,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"  database: {config.DB_PATH}")
     print(f"  run log:  {csv_path.name}")
 
+    if dropped:
+        print(f"\n  dropped {', '.join(dropped)} — the surrogate keys they held are gone")
     print("\nAll post-load checks passed")
+    print("Next: run_facts.py  (the warehouse has no facts until you do)")
     return 0
 
 

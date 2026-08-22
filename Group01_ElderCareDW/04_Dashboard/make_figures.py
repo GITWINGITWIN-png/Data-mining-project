@@ -12,7 +12,7 @@ import matplotlib
 matplotlib.use("Agg")
 
 import charts  # noqa: E402
-import queries  # noqa: E402
+import queries_mpl as queries  # noqa: E402
 
 DPI = 150
 
