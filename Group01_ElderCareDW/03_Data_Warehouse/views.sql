@@ -355,6 +355,13 @@ supply AS (
 population AS (
     -- Already one row per (state, year); take the most recent year the source
     -- covers. No aggregation, because the grain is right to begin with.
+    --
+    -- Newest year, not nearest-to-the-period, because `supply` above is pinned
+    -- to the latest period: this view has no other period in it, so newest and
+    -- nearest are the same choice made once. `04_Dashboard/queries_mpl.py`
+    -- picks the nearest year instead, and must, because it lets the user select
+    -- any of the 32 periods. The two agree on the latest period and are
+    -- supposed to differ elsewhere.
     SELECT state_code, pop_65plus, year AS population_year
     FROM Ref_State_Population
     WHERE year = (SELECT MAX(year) FROM Ref_State_Population)

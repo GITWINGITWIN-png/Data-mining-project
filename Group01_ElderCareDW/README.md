@@ -29,7 +29,7 @@ streamlit run app.py
 |---|---|---|
 | `01_Raw_Data/` | ข้อมูลดิบจาก CMS (ไม่เก็บใน git — ดู [README](01_Raw_Data/README.md)) | มีคำสั่งโหลดแล้ว |
 | `02_ETL/` | สคริปต์ Extract → Clean → Transform → Integrate → Load ([README](02_ETL/README.md)) | เสร็จ (Dimension + Fact) |
-| `03_Data_Warehouse/` | สคีมาพร้อมข้อบังคับ + ชั้นความหมาย ([README](03_Data_Warehouse/README.md)) · ไฟล์ DuckDB ไม่เก็บใน git | 8 ตาราง + 10 วิว |
+| `03_Data_Warehouse/` | สคีมาพร้อมข้อบังคับ + ชั้นความหมาย ([README](03_Data_Warehouse/README.md)) · ไฟล์ DuckDB ไม่เก็บใน git | 9 ตาราง + 10 วิว |
 | `04_Dashboard/` | แอป Streamlit **สองชุด** + โน้ตบุ๊ก + ภาพหน้าจอ ([README](04_Dashboard/README.md)) | ตอบ BQ1–BQ8 ครบทั้งสองชุด |
 | `05_AI_Usage_Log/` | บันทึกการใช้ Generative AI ([README](05_AI_Usage_Log/README.md)) | 18 รายการ (เกณฑ์ขั้นต่ำ 5) |
 | `06_Report/` | เอกสารออกแบบ (LaTeX) · คำตอบ 8 ข้อ · รายงานฉบับส่ง | เอกสารออกแบบ + คำตอบเสร็จ |

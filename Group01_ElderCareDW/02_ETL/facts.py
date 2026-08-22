@@ -121,17 +121,18 @@ def _ownership_key(df: pd.DataFrame, dim_ownership: pd.DataFrame) -> pd.Series:
 
 
 def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame) -> pd.Series:
-    """Blank chain means Independent, but only when the era actually has the column.
+    """Blank chain means Independent, but only when the file carries the column.
 
     Where there is no chain column at all, every row points at Unknown: not
     knowing is not the same as knowing there is no chain.
 
     Whether the column exists is read from the frame, not from the era's name.
     This used to test `era != "2019"`, which was true of every era that existed
-    when it was written; the 2020 era has no chain column either, so it took the
-    blank-means-Independent branch and asserted that ~15,300 facilities were in
-    no chain, for each of the eleven periods in that era, on no evidence. The
-    same test as dimensions.build_dim_chain, so the two cannot disagree.
+    when it was written. It is wrong twice over: the 2020 era has no chain
+    column, and neither do the 2026-era files before 2025-07 — CMS only added
+    `Chain Name` in that release, so 26 of the 32 periods have nothing to read.
+    The old test made all of them assert "in no chain" on no evidence. Same test
+    as dimensions.build_dim_chain, so the two cannot disagree.
     """
     if "chain_name" not in df.columns or df["chain_name"].isna().all():
         return pd.Series(UNKNOWN_KEY, index=df.index, dtype="int64")
@@ -163,7 +164,10 @@ def _denial_days(pen: pd.DataFrame, frame: SnapshotFrame, log: RunLog) -> pd.Ser
     if n_negative:
         log.add(
             step="clean",
-            rule="Q4",
+            # Not Q4: Q4 flags and keeps, this blanks. Logged under its own rule
+            # name so a reader counting Q4 flags does not find a row that was
+            # handled by the opposite policy.
+            rule="impossible_value",
             snapshot_date=frame.snapshot_date,
             target="Fact_Penalty_Event",
             rows_affected=n_negative,
