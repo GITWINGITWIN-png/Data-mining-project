@@ -390,10 +390,47 @@ def build_fact_penalty_event(
         allrows["fine_id"].notna().map({True: "fine_id", False: "natural_key"})
     )
 
+    # Identity, in priority order: CMS's own Fine ID where it exists, the
+    # natural key where it does not.
+    #
+    # The natural key alone is not enough once two Fine-ID-bearing periods
+    # overlap. Their windows both cover 2023-2026, so the same fine is reported
+    # twice — and where CMS revised the amount or the date between publications,
+    # the natural key differs on the two sightings and stores one penalty as
+    # two. Measured on Jun+Jul 2026: 493 Fine IDs spread across more than one
+    # key, inflating 444 facilities by $18.5M against CMS's own column.
+    #
+    # This is the hybrid the docstring above used to reject, and it is safe now
+    # only because the backfill ran first. The old objection was that an event
+    # seen both before and after the 202606 release would get two identities —
+    # a natural key in the early period and a Fine ID in the late one. Backfill
+    # removes that: the early sighting has already inherited the Fine ID of its
+    # own natural-key group, so both sightings resolve to the same identity.
+    # Without that step this would double-store instead of deduplicate.
+    allrows["_identity"] = allrows["fine_id"].where(
+        allrows["fine_id"].notna(), allrows["_dedup_key"]
+    )
+
     # Keep the first sighting of each event: contemporaneous attributes, and the
-    # earliest period is the one whose window the penalty actually fell in
+    # earliest period is the one whose window the penalty actually fell in. That
+    # also keeps the amount CMS published at the time, which is what its own
+    # per-facility total was computed from.
     allrows = allrows.sort_values(["_stamp", "ccn", "penalty_date"])
-    deduped = allrows.drop_duplicates(subset="_dedup_key", keep="first").copy()
+    deduped = allrows.drop_duplicates(subset="_identity", keep="first").copy()
+
+    by_natural_key_only = allrows["_dedup_key"].nunique()
+    if by_natural_key_only != len(deduped):
+        log.add(
+            step="clean",
+            rule="Q2",
+            target="Fact_Penalty_Event",
+            rows_affected=by_natural_key_only - len(deduped),
+            detail=(
+                f"Fine ID collapsed {by_natural_key_only - len(deduped):,} event(s) that the "
+                f"natural key had split — the same fine reported with a revised amount or "
+                f"date by a later period"
+            ),
+        )
 
     if backfilled:
         log.add(

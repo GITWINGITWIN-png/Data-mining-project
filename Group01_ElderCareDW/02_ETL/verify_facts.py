@@ -11,6 +11,8 @@ pipeline agreeing with itself.
 
 from __future__ import annotations
 
+import re
+
 import duckdb
 import pandas as pd
 
@@ -358,6 +360,53 @@ def main() -> int:
         f"SUM/SUM = {row[0]:.2%} vs AVG of ratios = {row[1]:.2%} "
         f"(a {abs(row[0] - row[1]) * 100:.1f} point gap — this is why ratios are not stored)",
     )
+
+    print("\n8. Every extracted source file was actually read")
+    # The check that would have caught the republished-period bug. A file that
+    # was downloaded and unpacked but never read costs nothing at run time and
+    # produces no error — the warehouse is simply smaller, and every other check
+    # still passes on the rows that did make it. Dedup collapsing from 38% to 0%
+    # was the visible symptom, and nobody was watching it.
+    cov = con.execute(
+        """
+        SELECT rows_affected, detail FROM etl_run_log
+        WHERE run_id = (SELECT MAX(run_id) FROM etl_run_log)
+          AND rule = 'coverage' AND target = 'penalties'
+        ORDER BY logged_at DESC LIMIT 1
+        """
+    ).fetchone()
+    if cov is None:
+        c.check("the ETL recorded source-file coverage", False,
+                "no coverage row in the run log — re-run run_facts.py")
+    else:
+        unread, detail = int(cov[0]), cov[1]
+        c.check("no extracted Penalties file went unread", unread == 0, detail)
+
+    dedup = con.execute(
+        """
+        SELECT detail FROM etl_run_log
+        WHERE run_id = (SELECT MAX(run_id) FROM etl_run_log)
+          AND rule = 'Q2' AND target = 'Fact_Penalty_Event'
+          AND detail LIKE '%rolling window%'
+        LIMIT 1
+        """
+    ).fetchone()
+    if dedup:
+        pct = re.search(r"\(([\d.]+)% were the rolling window", dedup[0])
+        if pct:
+            share = float(pct.group(1))
+            # The Penalties file is a rolling 3-year window. Two or more periods
+            # inside that window must therefore repeat penalties. A 0% overlap
+            # with several periods loaded means a file was dropped, not that CMS
+            # stopped repeating itself.
+            periods = con.execute(
+                "SELECT COUNT(DISTINCT snapshot_date_key) FROM Fact_Facility_Monthly"
+            ).fetchone()[0]
+            if periods > 1:
+                c.check("deduplication removed something, as overlapping windows require",
+                        share > 0, f"{share}% of raw rows were repeats across {periods} periods")
+            else:
+                c.note("only one period loaded, so no window overlap is expected", dedup[0])
 
     con.close()
     print("\n" + "=" * 62)
