@@ -1,0 +1,8 @@
+# แดชบอร์ด — ติดตั้งด้วย  python -m pip install -r requirements.txt
+# แล้วรันด้วย            streamlit run app.py
+#
+# ต้องสร้างคลังข้อมูลก่อน:  cd ../02_ETL && python run_dims.py && python run_facts.py
+pandas>=2.2
+duckdb>=1.0
+matplotlib>=3.8
+streamlit>=1.40
