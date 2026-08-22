@@ -120,13 +120,20 @@ def _ownership_key(df: pd.DataFrame, dim_ownership: pd.DataFrame) -> pd.Series:
     )
 
 
-def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame, era_has_chain: bool) -> pd.Series:
+def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame) -> pd.Series:
     """Blank chain means Independent, but only when the era actually has the column.
 
-    In the 2019 era there is no chain column at all, so every row points at
-    Unknown: not knowing is not the same as knowing there is no chain.
+    Where there is no chain column at all, every row points at Unknown: not
+    knowing is not the same as knowing there is no chain.
+
+    Whether the column exists is read from the frame, not from the era's name.
+    This used to test `era != "2019"`, which was true of every era that existed
+    when it was written; the 2020 era has no chain column either, so it took the
+    blank-means-Independent branch and asserted that ~15,300 facilities were in
+    no chain, for each of the eleven periods in that era, on no evidence. The
+    same test as dimensions.build_dim_chain, so the two cannot disagree.
     """
-    if not era_has_chain:
+    if "chain_name" not in df.columns or df["chain_name"].isna().all():
         return pd.Series(UNKNOWN_KEY, index=df.index, dtype="int64")
 
     mapping = dict(zip(dim_chain["chain_name"], dim_chain["chain_key"]))
@@ -134,6 +141,40 @@ def _chain_key(df: pd.DataFrame, dim_chain: pd.DataFrame, era_has_chain: bool) -
     keys = names.map(mapping)
     keys = keys.where(names.notna(), INDEPENDENT_CHAIN_KEY)   # blank -> Independent
     return keys.fillna(UNKNOWN_KEY).astype("int64")
+
+
+def _denial_days(pen: pd.DataFrame, frame: SnapshotFrame, log: RunLog) -> pd.Series:
+    """Payment denial length, with negative durations blanked rather than stored.
+
+    Rule Q4 flags implausible values and keeps them, because an occupancy of
+    105% is surprising but could be true. A negative duration is a different
+    thing: it is not unlikely, it is not a duration at all, and no reading of
+    the source makes it one. So the row survives — the penalty really was
+    imposed — but the length becomes NULL, which says "not known" instead of
+    asserting a number that cannot be right.
+
+    One row in the full 2019-2026 set trips this: CCN 056056, penalty dated
+    2018-12-31, reported as -526 days. schema.sql refuses to store it, and it
+    should; this is where it stops being stored.
+    """
+    days = clean.to_number(pen["payment_denial_days"])
+    negative = days < 0
+    n_negative = int(negative.sum())
+    if n_negative:
+        log.add(
+            step="clean",
+            rule="Q4",
+            snapshot_date=frame.snapshot_date,
+            target="Fact_Penalty_Event",
+            rows_affected=n_negative,
+            detail=(
+                f"{n_negative} payment denial(s) reported a negative length "
+                f"(min {int(days[negative].min())} days) — the event is kept, the "
+                f"length set to NULL because a negative duration is not a duration"
+            ),
+        )
+        days = days.mask(negative)
+    return days
 
 
 def _date_key(dates: pd.Series) -> pd.Series:
@@ -191,7 +232,7 @@ def build_fact_facility_monthly(
             ),
             "geography_key": _geography_key(df, dims["Dim_Geography"]),
             "ownership_key": _ownership_key(df, dims["Dim_Ownership"]),
-            "chain_key": _chain_key(df, dims["Dim_Chain"], frame.era != "2019"),
+            "chain_key": _chain_key(df, dims["Dim_Chain"]),
             "ccn": df["ccn"],
             "certified_beds": beds,
             "avg_residents_per_day": residents,
@@ -351,7 +392,7 @@ def build_fact_penalty_event(
             "penalty_type": clean.normalize_text(pen["penalty_type"]),
             "fine_id": clean.normalize_text(pen["fine_id"]) if "fine_id" in pen else pd.NA,
             "fine_amount_usd": clean.to_number(pen["fine_amount_usd"]),
-            "payment_denial_days": clean.to_number(pen["payment_denial_days"]),
+            "payment_denial_days": _denial_days(pen, frame, log),
             "_snapshot": frame.snapshot_date,
             "_stamp": frame.processing_date,
             "_era": frame.era,
@@ -621,7 +662,7 @@ def _penalty_attributes(
             "_snapshot": frame.snapshot_date,
             "geography_key": _geography_key(df, dims["Dim_Geography"]),
             "ownership_key": _ownership_key(df, dims["Dim_Ownership"]),
-            "chain_key": _chain_key(df, dims["Dim_Chain"], frame.era != "2019"),
+            "chain_key": _chain_key(df, dims["Dim_Chain"]),
         }))
     attrs = pd.concat(rows, ignore_index=True)
     return attrs.drop_duplicates(subset=["ccn", "_snapshot"], keep="first")

@@ -21,6 +21,7 @@ import argparse
 import config
 import dimensions
 import load
+import population
 import sources
 from runlog import RunLog
 
@@ -66,6 +67,21 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\nWriting to the database")
     load.write_tables(tables, log)
+
+    # Ref_State_Population is not a dimension and nothing keys to it, but BQ1 is
+    # unanswerable without it, so it loads here rather than in a step someone has
+    # to remember. No API key is needed: population.build falls back to a static
+    # Census file when CENSUS_API_KEY is unset.
+    print("\nLoading Ref_State_Population (source S4)")
+    pop_frame = population.build(log=log)
+    pop_problems = population.validate(pop_frame, log)
+    if pop_problems:
+        for p in pop_problems:
+            print(f"  ! {p}")
+        print("  ! population not written — BQ1 will return NULL for M10")
+    else:
+        population.write(pop_frame, log)
+
     dropped = load.drop_stale_facts(log)
     load.write_run_log(log)
     csv_path = log.save_csv()

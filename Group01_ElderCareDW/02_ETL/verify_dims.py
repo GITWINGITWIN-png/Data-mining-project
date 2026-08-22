@@ -191,13 +191,38 @@ def main() -> int:
         "SELECT COUNT(*) FROM Dim_Geography WHERE geography_key <> -1 AND length(zip_code) <> 5"
     ).fetchone()[0]
     c.check("every ZIP is 5 characters (rule Q1)", zip_len == 0, f"{zip_len} bad")
-    pop = con.execute(
-        "SELECT COUNT(*) FROM Dim_Geography WHERE pop_65plus IS NOT NULL"
+    # Population lives in Ref_State_Population at (state, year) grain, never on
+    # this table: at (zip, city, state) grain a state's population repeats on
+    # every ZIP row and a plain SUM multiplies it by the ZIP count.
+    has_pop_column = con.execute(
+        "SELECT COUNT(*) FROM duckdb_columns() "
+        "WHERE table_name = 'Dim_Geography' AND column_name = 'pop_65plus'"
     ).fetchone()[0]
-    c.note(
-        "pop_65plus",
-        f"{pop} rows populated — still needs a Census API key or the fallback, else BQ1 is blocked",
+    c.check(
+        "population is not stored on Dim_Geography, whose grain would multiply it",
+        has_pop_column == 0,
+        "pop_65plus is back on Dim_Geography — see Ref_State_Population" if has_pop_column
+        else "held in Ref_State_Population at (state, year) grain",
     )
+
+    pop_states = con.execute(
+        "SELECT COUNT(*) FROM duckdb_tables() WHERE table_name = 'Ref_State_Population'"
+    ).fetchone()[0]
+    if pop_states:
+        states, years = con.execute(
+            "SELECT COUNT(DISTINCT state_code), COUNT(DISTINCT year) FROM Ref_State_Population"
+        ).fetchone()
+        c.check(
+            "Ref_State_Population covers the states BQ1 ranks",
+            states >= 51,
+            f"{states} states x {years} years",
+        )
+    else:
+        c.check(
+            "Ref_State_Population exists, or BQ1 cannot be answered",
+            False,
+            "table missing — run population.py (no API key needed, it falls back)",
+        )
 
     print("\n7. Observations that affect the fact table design")
     dates = con.execute(

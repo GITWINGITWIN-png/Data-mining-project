@@ -48,6 +48,10 @@ TABLE_ORDER = [
     "Dim_Ownership",
     "Dim_Chain",
     "Dim_Penalty_Type",
+    # Not a dimension and not pointed at by any foreign key, but it is declared
+    # in schema.sql and carries its own constraints, so it is built the same way
+    # everything else is rather than copied across unchecked.
+    "Ref_State_Population",
     "Fact_Facility_Monthly",
     "Fact_Penalty_Event",
 ]
@@ -154,14 +158,16 @@ def report(con) -> None:
               f"   gap {gap:+.2f} pts")
 
     print("\nM10 / BQ1 readiness")
-    filled = con.execute(
-        "SELECT COUNT(*) FROM Dim_Geography WHERE pop_65plus IS NOT NULL"
-    ).fetchone()[0]
-    if filled:
-        print(f"  pop_65plus populated on {filled:,} rows — BQ1 can be answered")
+    answered, total, year = con.execute(
+        "SELECT COUNT(m10_beds_per_1000_elderly), COUNT(*), MAX(population_year) "
+        "FROM v_market_saturation"
+    ).fetchone()
+    if answered:
+        print(f"  M10 resolves for {answered:,} of {total:,} states "
+              f"on {year} population — BQ1 can be answered")
     else:
-        print("  pop_65plus is empty — v_market_saturation returns NULL for M10, "
-              "and BQ1 stays blocked until the Census load exists")
+        print("  M10 is NULL for every state — run 02_ETL/population.py, which "
+              "falls back to a static file when there is no Census API key")
 
 
 def main(argv: list[str] | None = None) -> int:

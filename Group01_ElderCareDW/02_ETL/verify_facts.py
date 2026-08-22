@@ -108,17 +108,47 @@ def main() -> int:
         ).fetchone()[0]
         c.check(f"Fact_Penalty_Event.{column} -> {dim}", orphans == 0, f"{orphans} orphans")
 
-    chain_unknown = con.execute(
-        "SELECT COUNT(*) FROM Fact_Facility_Monthly f JOIN Dim_Date d "
-        "ON f.snapshot_date_key = d.date_key WHERE f.chain_key = -1 AND d.year = 2019"
-    ).fetchone()[0]
-    chain_unknown_total = con.execute(
-        "SELECT COUNT(*) FROM Fact_Facility_Monthly WHERE chain_key = -1"
+    # An Unknown chain is only acceptable when the source file had no chain
+    # column at all, which is a property of the era, not of the calendar year.
+    # This used to test `d.year = 2019` and passed only because the four-period
+    # sample stopped there; the 2019 layout actually runs to 2020-07, so three
+    # legitimately chain-less periods failed once the full set was loaded.
+    #
+    # Testing the era directly needs no boundary date: a period with no chain
+    # column is entirely Unknown, while a period that has one resolves most
+    # rows. So every Unknown row must sit in a period where *every* row is
+    # Unknown. That still catches the regression worth catching — a period that
+    # silently lost the chain column would be all-Unknown among neighbours that
+    # are not, and the counts below make it visible.
+    chain_unknown_total, chain_unknown_in_blank_periods = con.execute(
+        """
+        WITH per_period AS (
+            SELECT f.snapshot_date_key,
+                   COUNT(*) AS rows_in_period,
+                   SUM(CASE WHEN f.chain_key = -1 THEN 1 ELSE 0 END) AS unknown_rows
+            FROM Fact_Facility_Monthly f
+            GROUP BY f.snapshot_date_key
+        )
+        SELECT SUM(unknown_rows),
+               SUM(CASE WHEN unknown_rows = rows_in_period THEN unknown_rows ELSE 0 END)
+        FROM per_period
+        """
+    ).fetchone()
+    blank_periods = con.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT f.snapshot_date_key
+            FROM Fact_Facility_Monthly f
+            GROUP BY f.snapshot_date_key
+            HAVING SUM(CASE WHEN f.chain_key = -1 THEN 1 ELSE 0 END) = COUNT(*)
+        )
+        """
     ).fetchone()[0]
     c.check(
-        "every Unknown chain key comes from the 2019 era, which has no chain column",
-        chain_unknown == chain_unknown_total,
-        f"{chain_unknown:,} of {chain_unknown_total:,}",
+        "every Unknown chain key comes from an era whose files carry no chain column",
+        chain_unknown_total == chain_unknown_in_blank_periods,
+        f"{chain_unknown_in_blank_periods:,} of {chain_unknown_total:,} "
+        f"sit in the {blank_periods} period(s) that have no chain data at all",
     )
 
     print("\n3. Canary row CCN 015009, period 2026-06-01")

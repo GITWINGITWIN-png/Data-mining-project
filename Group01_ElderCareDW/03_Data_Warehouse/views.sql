@@ -319,19 +319,21 @@ FULL JOIN penalties p
 
 
 -- =====================================================================
---  4. BQ1 / M10 — market saturation. Currently blocked.
+--  4. BQ1 / M10 — market saturation.
 --
 --  M10 = certified beds per 1,000 residents aged 65+.
 --
---  pop_65plus lives on Dim_Geography at (zip, city, state) grain, so it is
---  summed over DISTINCT ZIP codes, not over dimension rows: a city split
---  across three rows would otherwise contribute its population three times.
+--  Population comes from Ref_State_Population, which is already at (state,
+--  year) grain, so the join is a plain equi-join on state_code and there is
+--  nothing to aggregate. This used to sum pop_65plus off Dim_Geography over
+--  DISTINCT ZIP codes — a workaround for storing a state figure at ZIP grain,
+--  which only ever produced NULL because the column was never loaded.
 --
---  The column is entirely NULL until the Census ACS load exists, so
---  m10_beds_per_1000_elderly returns NULL for every state today. The view
---  ships anyway — the shape of BQ1's answer is settled, and only the
---  population feed is missing. The design document's fallback is to drop
---  BQ1 and keep the other seven, which still clears the requirement.
+--  The year is the latest the population source covers, not the year of the
+--  facility period. They differ: CMS publishes quarterly and the Census
+--  estimates lag by a year or more. Pinning M10 to the newest population is
+--  the honest reading of "beds per elderly person today", and the year is
+--  returned alongside so the dashboard can say which one it used.
 -- =====================================================================
 
 CREATE OR REPLACE VIEW v_market_saturation AS
@@ -351,18 +353,11 @@ supply AS (
     GROUP BY ALL
 ),
 population AS (
-    -- One population value per ZIP, then summed. Summing the dimension rows
-    -- directly would multiply any ZIP that appears under several city
-    -- spellings.
-    SELECT
-        state_code,
-        SUM(pop_65plus) AS pop_65plus
-    FROM (
-        SELECT DISTINCT state_code, zip_code, pop_65plus
-        FROM Dim_Geography
-        WHERE geography_key <> -1
-    )
-    GROUP BY state_code
+    -- Already one row per (state, year); take the most recent year the source
+    -- covers. No aggregation, because the grain is right to begin with.
+    SELECT state_code, pop_65plus, year AS population_year
+    FROM Ref_State_Population
+    WHERE year = (SELECT MAX(year) FROM Ref_State_Population)
 )
 SELECT
     s.state_code,
@@ -373,6 +368,7 @@ SELECT
     s.total_residents,
     s.total_residents / NULLIF(s.total_certified_beds, 0) AS m1_occupancy_rate,
     p.pop_65plus,
+    p.population_year,
     s.total_certified_beds / NULLIF(p.pop_65plus / 1000.0, 0) AS m10_beds_per_1000_elderly
 FROM supply s
 LEFT JOIN population p ON s.state_code = p.state_code;
