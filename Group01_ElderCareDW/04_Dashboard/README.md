@@ -16,7 +16,8 @@
 | ชั้นกราฟ | อยู่ในตัว `app.py` | `charts.py` แยกออกมา **โน้ตบุ๊กใช้ร่วม** |
 | Business Insight | `insights.py` สร้างจากข้อมูลจริงตอน render | เขียนไว้ในแท็บข้อเสนอแนะ อ้างตัวเลขจาก `queries_mpl.py` |
 | ตรวจอัตโนมัติ | `verify_dashboard.py` (56 ข้อ) | `test_dashboard.py` (11 ชุดตัวกรอง ผ่าน `AppTest`) |
-| ของแถม | แท็บคุณภาพข้อมูล | ภาพหน้าจอ 9 ภาพ + กราฟ 21 รูปสำหรับรายงาน |
+| การวาดบนหน้าจอ | Plotly วาดเป็น SVG อยู่แล้ว | ส่ง matplotlib ออกเป็น **SVG** ไม่ใช่ `st.pyplot()` |
+| ของแถม | แท็บคุณภาพข้อมูล | ภาพหน้าจอ 9 ภาพ + กราฟ 21 รูป (.png และ .pdf) |
 
 ```bash
 streamlit run app.py        # ชุด Plotly
@@ -55,7 +56,7 @@ python verify_dashboard.py
 | `queries_mpl.py` | ชั้น query ของชุดที่สอง |
 | `charts.py` | ชั้นกราฟ matplotlib — โน้ตบุ๊กและ `app_mpl.py` ใช้ร่วมกัน |
 | `test_dashboard.py` | ทดสอบชุดที่สองด้วยตัวกรองจริง 11 ชุด |
-| `make_figures.py` | สร้างกราฟ 21 รูปสำหรับรายงาน |
+| `make_figures.py` | สร้างกราฟ 21 รูป **ทั้ง .png และ .pdf** — รายงาน LaTeX ให้ใช้ .pdf เพราะเป็นเวกเตอร์ ไม่แตกเวลาขยาย |
 | `make_screenshots.py` | ถ่ายภาพหน้าจอ 9 ภาพ (ต้องเปิด server ก่อน) |
 | `BQ*.ipynb` | โน้ตบุ๊ก BQ1/BQ2/BQ8 รันผ่านทั้งเล่ม มี output ติดมาด้วย |
 | `screenshots/` | ภาพหน้าจอสำหรับรายงาน รวมภาพที่ใช้ตัวกรองแล้ว |

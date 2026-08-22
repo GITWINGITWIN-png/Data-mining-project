@@ -267,13 +267,19 @@ def caveat(text: str) -> None:
 
 
 def show(figure) -> None:
-    """Draw a matplotlib figure and release it.
+    """Draw a matplotlib figure as vector, then release it.
 
-    Streamlit reruns the whole script on every widget change. Without the
-    close, each rerun leaves its figures in pyplot's registry and the process
-    grows until matplotlib starts warning about open figures.
+    Deliberately not `st.pyplot()`. That rasterises at the figure's DPI and
+    Streamlit stretches the bitmap to the column width, so every chart reads as
+    a blown-up screenshot — soft lines, fuzzy numbers. `charts.to_svg` keeps it
+    vector, so the browser draws it at the size it actually occupies and it
+    stays sharp when the reader zooms or when the page goes into the report.
+
+    The close still matters: Streamlit reruns the whole script on every widget
+    change, and without it each rerun leaves its figures in pyplot's registry
+    until matplotlib starts warning about open figures.
     """
-    st.pyplot(figure, width="stretch")
+    st.markdown(charts.to_svg(figure), unsafe_allow_html=True)
     matplotlib.pyplot.close(figure)
 
 
