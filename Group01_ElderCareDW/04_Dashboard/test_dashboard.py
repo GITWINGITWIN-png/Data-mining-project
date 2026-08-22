@@ -41,6 +41,45 @@ CASES = [
 ]
 
 
+def _reco_text(app) -> list[str]:
+    """ข้อความข้อเสนอแนะที่แท็บ 💡 พิมพ์ออกมา
+
+    แท็บนั้นใช้ `st.success` ขึ้นต้นด้วย "ข้อเสนอแนะ:" ส่วน `st.success` อีกที่หนึ่ง
+    คือแถบ "กำลังกรอง" ใน sidebar จึงต้องกรองด้วยคำขึ้นต้น ไม่ใช่เอาทั้งหมด
+    """
+    return [e.value for e in app.success if "ข้อเสนอแนะ:" in e.value]
+
+
+def test_insights_move_with_the_filter() -> bool:
+    """ข้อเสนอแนะต้องเปลี่ยนเมื่อตัวกรองเปลี่ยน
+
+    เทสต์นี้มีเพราะแท็บนี้เคยเป็นลิสต์ข้อความที่พิมพ์ตัวเลขฝังไว้ ตัวเลขจึงนิ่งสนิท
+    ไม่ว่าจะกรองอย่างไร และชุดตรวจเดิมไม่มีข้อไหนจับได้เลย — ทุกข้อดูแค่ว่า
+    หน้าเรนเดอร์ผ่านไหม ซึ่งลิสต์ข้อความคงที่ก็ผ่านสบาย ๆ
+    """
+    base = AppTest.from_file("app_mpl.py", default_timeout=300).run()
+    base_text = _reco_text(base)
+
+    filtered = AppTest.from_file("app_mpl.py", default_timeout=300).run()
+    filtered.session_state["f_states"] = ["IL"]
+    filtered.session_state["f_ownership"] = ["For profit"]
+    filtered.run()
+    filtered_text = _reco_text(filtered)
+
+    if not base_text:
+        print("FAIL  insights move with the filter: ไม่มีข้อเสนอแนะเลยในกรณีฐาน")
+        return False
+    if base_text == filtered_text:
+        print("FAIL  insights move with the filter: "
+              f"กรอง IL + For profit แล้วข้อความ {len(base_text)} ข้อเหมือนเดิมทุกตัวอักษร "
+              "— แปลว่าตัวเลขถูกพิมพ์ฝังไว้ ไม่ได้คำนวณจากตัวกรอง")
+        return False
+
+    print(f"OK    insights move with the filter: "
+          f"{len(base_text)} ข้อในกรณีฐาน → {len(filtered_text)} ข้อหลังกรอง และข้อความต่างกัน")
+    return True
+
+
 def main() -> int:
     failures = 0
     for label, state in CASES:
@@ -66,7 +105,11 @@ def main() -> int:
         print(f"OK    {label}: {len(app.metric)} measures, "
               f"{len(app.dataframe)} tables")
 
-    print(f"\n{len(CASES) - failures}/{len(CASES)} passed")
+    total = len(CASES) + 1
+    if not test_insights_move_with_the_filter():
+        failures += 1
+
+    print(f"\n{total - failures}/{total} passed")
     return 1 if failures else 0
 
 
