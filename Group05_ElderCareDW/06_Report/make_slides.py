@@ -497,7 +497,7 @@ def slide_title(prs):
     hline(slide, Inches(1.15), Inches(4.30), Inches(5.4), color=RGBColor(0x3A, 0x39, 0x36))
 
     tf = textbox(slide, Inches(1.15), Inches(4.52), Inches(5.6), Inches(1.5))
-    para(tf, "**กลุ่มที่ 01**", size=13, color=WHITE, first=True, space_after=5)
+    para(tf, "**กลุ่มที่ 05**", size=13, color=WHITE, first=True, space_after=5)
     for label in ("สมาชิก 1 __________________  ·  หน้าที่ __________",
                   "สมาชิก 2 __________________  ·  หน้าที่ __________",
                   "สมาชิก 3 __________________  ·  หน้าที่ __________"):

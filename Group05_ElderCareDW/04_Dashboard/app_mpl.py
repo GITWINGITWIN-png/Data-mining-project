@@ -1,6 +1,6 @@
 """ElderCare Insight — the matplotlib dashboard, sharing code with the notebooks.
 
-    cd Group01_ElderCareDW/04_Dashboard
+    cd Group05_ElderCareDW/04_Dashboard
     streamlit run app_mpl.py
 
 **There are two dashboards in this folder and that is deliberate.** `app.py`
@@ -323,7 +323,7 @@ period_labels = {
 
 with st.sidebar:
     st.title("🏥 ElderCare Insight")
-    st.caption("Mini Data Warehouse & Analytics Dashboard · Group 01")
+    st.caption("Mini Data Warehouse & Analytics Dashboard · Group 05")
 
     st.subheader("ตัวกรอง")
 
@@ -1055,7 +1055,7 @@ with tab_reco:
 
 st.divider()
 st.caption(
-    "ElderCare Insight · Group 01 · ข้อมูล CMS Nursing Home Compare, SNF VBP "
+    "ElderCare Insight · Group 05 · ข้อมูล CMS Nursing Home Compare, SNF VBP "
     "และ US Census · คลังข้อมูล DuckDB สร้างจาก `02_ETL/run_dims.py` และ "
     "`run_facts.py` · ทุกตัวเลขบนหน้านี้เรียกผ่าน `queries.py` ซึ่งโน้ตบุ๊กใน "
     "`04_Dashboard/` ใช้ร่วมกัน"

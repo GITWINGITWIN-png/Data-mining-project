@@ -1,6 +1,6 @@
 # คำตอบคำถามทางธุรกิจทั้ง 8 ข้อ
 
-**โครงงาน** ElderCare Insight — Mini Data Warehouse & Analytics Dashboard · Group 01
+**โครงงาน** ElderCare Insight — Mini Data Warehouse & Analytics Dashboard · Group 05
 **คำนวณเมื่อ** 22 สิงหาคม 2569 · **งวดหลัก** 2026-07-01 · **หน้าต่างค่าปรับ** 2023-07-01 ถึง 2026-07-01
 
 ทุกตัวเลขในเอกสารนี้เรียกผ่าน `04_Dashboard/queries_mpl.py` ซึ่งเป็นโมดูลเดียวกับที่แดชบอร์ด
@@ -448,7 +448,7 @@ python -c "import queries_mpl as q; con=q.connect(); f,c=q.bq3_staffing_gradient
 ## วิธีรันซ้ำทั้งหมด
 
 ```bash
-cd Group01_ElderCareDW
+cd Group05_ElderCareDW
 
 # 0. สภาพแวดล้อม — เครื่อง Ubuntu ต้องใช้ venv (Python 3.12+ บล็อก pip ตรง ๆ ตาม PEP 668)
 python3 -m venv .venv && source .venv/bin/activate

@@ -36,8 +36,8 @@
 
 | ลำดับ | prompt ตามที่พิมพ์จริง | ผลลัพธ์ |
 |---|---|---|
-| 1 | *"why cant i complie latex Group01_ElderCareDW/06_Report/eldercare_dw_design.tex"* | รายการที่ 004 |
-| 2 | *"จากเอกสน Group01_ElderCareDW/06_Report/eldercare_dw_design.pdf ฉันต้องใช้ข้อมูลอะไรบ้างนะ"* | อ่านเอกสารเพื่อสรุปแหล่งข้อมูลที่ต้องใช้ ไม่ได้แก้ไฟล์ |
+| 1 | *"why cant i complie latex Group05_ElderCareDW/06_Report/eldercare_dw_design.tex"* | รายการที่ 004 |
+| 2 | *"จากเอกสน Group05_ElderCareDW/06_Report/eldercare_dw_design.pdf ฉันต้องใช้ข้อมูลอะไรบ้างนะ"* | อ่านเอกสารเพื่อสรุปแหล่งข้อมูลที่ต้องใช้ ไม่ได้แก้ไฟล์ |
 | 3 | *"จัดการยืนยันเรื่องที่สงสัยในข้อ 20 สิ่งที่ต้องทำก่อนเริ่มพัฒนา"* | รายการที่ 005 |
 | 4 | *"ตรวจสอบความถูกต้องของ ETL ที่เพิ่มมา"* | รายการที่ 006 |
 | 5 | *"ตรงไหนที่ใช้ API นะ"* | ไล่หาจุดที่เรียก API ในโค้ด พบว่าปลายทาง C นิยามไว้แต่ไม่ได้เรียก ไม่ได้แก้ไฟล์ |
@@ -316,7 +316,7 @@ _(เติมชื่อสมาชิก — ต้องอธิบาย�
 
 ### Prompt ที่ใช้
 
-> why cant i complie latex Group01_ElderCareDW/06_Report/eldercare_dw_design.tex
+> why cant i complie latex Group05_ElderCareDW/06_Report/eldercare_dw_design.tex
 
 ### AI แนะนำอะไร
 
@@ -1146,7 +1146,7 @@ _(เติมชื่อสมาชิก — ต้องอธิบาย�
 | ไม่มีเวอร์ชันขัดกัน | ทั้งสองไฟล์ปักหมุด `pandas>=2.2,<4` และ `duckdb>=1.0,<2` เหมือนกัน | pip resolve ผ่านโดยไม่มี conflict |
 
 ```bash
-cd Group01_ElderCareDW
+cd Group05_ElderCareDW
 python -m pip install -r requirements.txt
 ```
 
@@ -1322,7 +1322,7 @@ _(เติมชื่อสมาชิก — ต้องอธิบาย�
 
 | ลำดับ | prompt ตามที่พิมพ์จริง | ผลลัพธ์ |
 |---|---|---|
-| 1 | *"คำนวนทุกอย่างแล้วตอบคำถามทั้ง 8 ข้อจาก Group01_ElderCareDW/06_Report/eldercare_dw_design.pdf จากนั้นนำไปสร้าง dashboard ให้ได้ตามข้อกำหนดเพื่อส่งงานตาม 69-1-Mini DW & Dashboard-1.pdf"* | รายการที่ 017 |
+| 1 | *"คำนวนทุกอย่างแล้วตอบคำถามทั้ง 8 ข้อจาก Group05_ElderCareDW/06_Report/eldercare_dw_design.pdf จากนั้นนำไปสร้าง dashboard ให้ได้ตามข้อกำหนดเพื่อส่งงานตาม 69-1-Mini DW & Dashboard-1.pdf"* | รายการที่ 017 |
 | 2 | *"สร้าง slide ไฟล์ที่เปิดได้ด้วย google slide เพื่อใช้ในการนำเสนอตามหัวข้อใน 69-1-Mini DW & Dashboard-1.pdf"* | รายการที่ 020 |
 | 3 | *"ต่อเลย"* (ตอบคำถามเรื่องภาษาและจำนวนสไลด์ แล้วสั่งให้ทำต่อ) | รายการที่ 020 |
 | 4 | *"ทำไมตรง dashboard ตรงข้อเสนอแนะเหมือนเลขมันไม่เปลี่ยนตามข้อมูลที่ fillter เลย"* | รายการที่ 021 |
@@ -1386,7 +1386,7 @@ _(เติมชื่อสมาชิก — ต้องอธิบาย�
 (pandas ล้วน) รอบสองเรียกผ่าน `queries.py` ที่เขียนขึ้นจริง แล้วเทียบตัวเลข
 
 ```bash
-cd Group01_ElderCareDW/04_Dashboard
+cd Group05_ElderCareDW/04_Dashboard
 python -c "import queries as q; con=q.connect(); f,c=q.bq3_staffing_gradient(con); \
   print(c['below_floor'], round(c['below_floor_pct'],1)); print(c['below'], c['above'])"
 ```
@@ -1797,7 +1797,7 @@ CMS มี archive API ของตัวเองที่เก็บครบ
 ### ตรวจสอบความถูกต้องอย่างไร
 
 ```bash
-cd Group01_ElderCareDW/02_ETL
+cd Group05_ElderCareDW/02_ETL
 python fetch_snapshots.py --quarterly
 rm -f ../03_Data_Warehouse/eldercare.duckdb
 python run_dims.py && python run_facts.py && python population.py
@@ -1899,7 +1899,7 @@ _(เติมชื่อสมาชิกที่อ่านและอธ
 แล้วเอาผลไปใส่สไลด์ 14 โดยตรง
 
 ```bash
-cd Group01_ElderCareDW
+cd Group05_ElderCareDW
 .venv/bin/python -c "
 import duckdb; con = duckdb.connect('03_Data_Warehouse/eldercare.duckdb', read_only=True)
 for t in ['Dim_Date','Dim_Facility','Dim_Geography','Dim_Ownership','Dim_Chain',
@@ -2054,6 +2054,111 @@ cd 04_Dashboard && ../.venv/bin/python verify_dashboard.py
 ถามว่า "หน้าเรนเดอร์ผ่านไหม" ซึ่งข้อความที่พิมพ์ฝังไว้ก็ผ่านสบาย ๆ — **คนที่จับได้คือ
 สมาชิกกลุ่มที่นั่งขยับตัวกรองแล้วสังเกตว่าเลขไม่ขยับ** นี่เป็นเหตุผลเดียวกับที่กลุ่ม
 ตั้งกฎว่า "รันแล้วไม่ error" ไม่นับเป็นการตรวจสอบ
+
+### ใครอธิบายส่วนนี้ได้บ้าง
+
+_(เติมชื่อสมาชิกที่อ่านและอธิบายกลับได้)_
+
+---
+
+## รายการที่ 022 — เปลี่ยนเลขกลุ่มจาก 01 เป็น 05 ทั้งโครงงาน
+
+| | |
+|---|---|
+| **วันที่** | 27 สิงหาคม 2569 |
+| **ผู้ใช้งาน** | _(เติมชื่อ)_ |
+| **เครื่องมือ** | Claude (Claude Code, Opus) |
+| **ใช้กับส่วนใด** | ชื่อโฟลเดอร์ส่งงาน · `.gitignore` · `README.md` · `04_Dashboard/app_mpl.py` · `06_Report/` (tex, html, md, สไลด์, PDF) · `05_AI_Usage_Log/` |
+| **สถานะการตรวจสอบ** | [ตรวจแล้ว] |
+
+### Prompt ที่ใช้
+
+> *"ช่วยแก้เลขกลุ่มของทุกไฟล์ให้ที ฉันอยู่กลุ่ม 5"*
+
+### AI แนะนำอะไร
+
+- ค้นก่อนแก้ พบว่าเลข 01 ฝังอยู่ **3 รูปแบบที่ต้องแก้คนละวิธี** ไม่ใช่ replace ครั้งเดียวจบ
+  1. `Group01_ElderCareDW` — ชื่อโฟลเดอร์ส่งงาน + path ที่ไฟล์อื่นอ้างถึง
+  2. `Group 01` / `กลุ่มที่ 01` — ข้อความบนหน้าปกรายงาน, footer แดชบอร์ด, สไลด์, HTML
+  3. `กลุ่มที่ \underline{\hspace{1.2cm}}` — ช่องว่างบนหน้าปกเอกสารออกแบบที่ไม่เคยเติม
+- ชี้ว่า **แก้ source อย่างเดียวไม่พอ** เพราะ PDF สองฉบับกับ `.pptx` เป็นไฟล์ที่ generate
+  ออกมา ถ้าไม่ build ใหม่ ไฟล์ที่ส่งจริงจะยังพิมพ์ว่า Group 01
+
+### กลุ่มนำไปใช้หรือแก้ไขอย่างไร
+
+- **รับมาทั้งหมด** — ใช้ `git mv` เปลี่ยนชื่อโฟลเดอร์เพื่อให้ git ตามรอยไฟล์เป็น rename
+  ไม่ใช่ลบทิ้งแล้วเพิ่มใหม่ (ประวัติไฟล์ทั้งหมดจึงไม่ขาด)
+- **แก้เพิ่มระหว่างทาง** สามจุดที่ผูกกับการเปลี่ยนนี้
+  - `.venv/` พังเพราะ shebang ของสคริปต์ 19 ไฟล์ยังชี้ไปที่ path เดิม → sed แก้ให้ตรง
+  - บรรทัด "ยังต้องเติม: หมายเลขกลุ่มและชื่อสมาชิก" ใน `README.md` และ checklist
+    ในเอกสารออกแบบ → ตัดคำว่าหมายเลขกลุ่มออก เพราะเติมแล้ว เหลือแค่ชื่อสมาชิก
+  - ลบไฟล์ขยะ latexmk เก่า (`.log` `.fls` `.fdb_latexmk` `.aux`) ที่ค้างอยู่นอก `build/`
+    และยังฝัง path เดิมไว้
+- **ยังไม่ได้ทำ:** ชื่อสมาชิกสามคนบนหน้าปกเอกสารออกแบบและใน `README.md` ยังว่าง
+  ทั้งที่ `eldercare_report.tex` มีครบแล้ว — ไม่ได้เติมเองเพราะอยู่นอกขอบเขตที่สั่ง
+
+### ตรวจสอบความถูกต้องอย่างไร
+
+**1. บทเรียนสำคัญ — การค้นรอบแรกรายงานผลไม่ครบ**
+`grep` ในเชลล์นี้ถูกครอบด้วยฟังก์ชันที่เปิด `--ignore-files` (เคารพ `.gitignore`)
+รอบแรกจึงตอบว่า `.venv` ไม่มี path เดิมเลย ทั้งที่จริงมี **ต้องเรียก `/usr/bin/grep`
+ตรง ๆ ถึงเห็นของจริง**
+
+```bash
+grep -rl "Group01_ElderCareDW" Group05_ElderCareDW/.venv | wc -l          # ตอบ 0
+/usr/bin/grep -rl "Group01_ElderCareDW" Group05_ElderCareDW/.venv | wc -l # ตอบ 1557
+```
+
+**ผลการตรวจ:** ต่างกัน 0 กับ 1,557 ไฟล์ · การค้นทั้งหมดหลังจากนี้ใช้ `/usr/bin/grep`
+
+**2. พิสูจน์ว่า venv ยังใช้งานได้หลังเปลี่ยนชื่อโฟลเดอร์**
+
+```bash
+head -1 Group05_ElderCareDW/.venv/bin/streamlit
+Group05_ElderCareDW/.venv/bin/python -c "import duckdb,pandas;print('venv ok')"
+```
+
+**ผลการตรวจ:** shebang ชี้ไป `Group05_...` แล้ว · import ผ่าน · ที่เหลืออีก 1,538 ไฟล์
+เป็น `.pyc` ซึ่ง Python สร้างใหม่เองและไม่กระทบการรัน
+
+**3. เปิด PDF ที่ build ใหม่มาอ่านข้อความบนหน้าปกจริง ไม่ใช่เชื่อว่า build ผ่านแล้วถูก**
+
+```bash
+cd 06_Report && latexmk -xelatex -outdir=build eldercare_report.tex && cp build/*.pdf .
+pdftotext -layout -f 1 -l 1 eldercare_dw_design.pdf - | grep "กลุ่มที่"
+pdftotext -f 1 -l 1 eldercare_report.pdf - | grep "Group"
+```
+
+**ผลการตรวจ:** เอกสารออกแบบขึ้น `กลุ่มที่  05  สมาชิก:` (ช่องว่างที่เคยเปล่าเติมแล้ว) ·
+รายงานฉบับส่งขึ้น `Group 05, Data Mining / Data Warehouse` · จำนวนหน้าเท่าเดิม 35 และ
+15 หน้า ขนาดไฟล์ต่างจากเดิม 27 ไบต์ — ยืนยันว่าเปลี่ยนแค่ข้อความ ไม่ได้พังเนื้อหาอื่น
+
+**4. แกะ .pptx มาดู XML ว่าข้อความในสไลด์เปลี่ยนจริง**
+
+```bash
+cd 06_Report && uv run --with python-pptx python make_slides.py
+unzip -p ElderCare_Insight_Slides.pptx 'ppt/slides/slide1.xml' \
+  | python3 -c "import sys,re;print([m for m in re.findall(r'<a:t>([^<]*)</a:t>',sys.stdin.read()) if 'กลุ่ม' in m])"
+```
+
+**ผลการตรวจ:** ได้ `['กลุ่มที่ 05']` · สไลด์ครบ 29 แผ่นเท่าเดิม
+
+**5. กวาดซ้ำทั้งโครงงานว่าไม่เหลือ 01 ที่ไหนอีก รวมไฟล์ binary**
+
+```bash
+/usr/bin/grep -rlI --exclude-dir=.git --exclude-dir=__pycache__ -E "Group01|Group 01|กลุ่มที่ 01" .
+for f in 06_Report/*.pdf; do pdftotext "$f" - | grep -c "Group 01"; done
+```
+
+**ผลการตรวจ:** ไฟล์ข้อความ **0 ไฟล์** · PDF ทั้งสองฉบับและ `.pptx` นับได้ **0 ครั้ง**
+
+### บทเรียนที่ควรพูดในวิดีโอ
+
+**"หาไม่เจอ" กับ "ไม่มี" ไม่ใช่เรื่องเดียวกัน** ถ้าเชื่อผลค้นรอบแรก จะสรุปว่า venv
+สะอาดดีแล้วปล่อยผ่าน ทั้งที่ path เดิมยังอยู่ครบ 1,557 ไฟล์ — เครื่องมือค้นมีค่าตั้งต้น
+ที่ซ่อนของบางอย่างไว้เสมอ (ที่นี่คือกฎใน `.gitignore`) การตรวจที่เชื่อถือได้ต้องรู้ว่า
+เครื่องมือที่ใช้กำลังมองข้ามอะไรอยู่ · และหลักเดียวกันนี้คือเหตุผลที่ต้องเปิด PDF
+กับ .pptx ที่ build ใหม่มาอ่านจริง แทนที่จะดูแค่ว่าคำสั่ง build จบด้วย exit code 0
 
 ### ใครอธิบายส่วนนี้ได้บ้าง
 
