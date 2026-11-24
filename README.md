@@ -11,6 +11,6 @@ A data warehouse and two Streamlit dashboards for skilled nursing facility opera
 
 **Stack:** Python, pandas, DuckDB, Streamlit, XeLaTeX.
 
-Run instructions, the folder guide and the design document are in [Group05_ElderCareDW/README.md](Group05_ElderCareDW/README.md) (in Thai). Generative AI use is logged in [05_AI_Usage_Log](Group05_ElderCareDW/05_AI_Usage_Log/). The assignment brief is not included because it belongs to the course.
+Run instructions, the folder guide and the design document are in [Group05_ElderCareDW/README.md](Group05_ElderCareDW/README.md) (in Thai). The assignment brief is not included because it belongs to the course.
 
 **Data:** Centers for Medicare & Medicaid Services, Provider Data Catalog (Nursing Homes); U.S. Census Bureau, American Community Survey (table B01001).
